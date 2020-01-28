@@ -1,0 +1,8 @@
+dup1
+dup1.c
+dup_test.c
+Makefile
+out.txt
+yash
+yash.c
+yash.o
