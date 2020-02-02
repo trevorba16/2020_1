@@ -11,7 +11,7 @@
 
 #define	MAXLINE	4096
 
-int processSingleCommand(char** args, int argc, int input_index, int output_index, int error_index) {
+void processSingleCommand(char** args, int argc, int input_index, int output_index, int error_index) {
 
     args[argc] = NULL;
 
@@ -56,95 +56,145 @@ int processSingleCommand(char** args, int argc, int input_index, int output_inde
     else {
         wait((int *)NULL);
     }
-    return 0;
 }
 
-int processPipeCommands(char* leftHand, char* rightHand) {
-    return 0;
-}
+void processPipeCommand(char** init_args, int argc, int pipe_index) {
 
-void processOutputCommand(char* commandString, int output_index, int end_index) {
+    char **args_left = malloc((pipe_index + 1) * sizeof(char *));
+    char **args_right = malloc(((argc - pipe_index) + 1) * sizeof(char *));
 
-    int output_length = end_index - output_index;
+    int left_input = -1;
+    int left_output = -1;
+    int left_error = -1;
 
-    char command_string[output_index + 1];
+    int right_input = -1;
+    int right_output = -1;
+    int right_error = -1;
 
-    int b = 0;
-
-    while (b < output_index - 1) 
-    {
-        command_string[b] = commandString[b];
-        b++;
+    for (int i = 0; i < pipe_index; i++) {
+        printf("args_left[%d]: %s\n", i, init_args[i]);
+        args_left[i] = init_args[i];
     }
-    command_string[b] = '\0';
+    args_left[pipe_index] = NULL;
 
-    char output_string[output_length + 1];
+    for (int i = 0; i < (argc - pipe_index) - 1; i++) {
 
-    int a = 0;
-    int c = 1;
-    while (c < output_length) 
-    {
-        if (commandString[output_index + c] != ' ') 
-        {
-            output_string[a] = commandString[output_index+c];
-            a++;
+        printf("args_right[%d]: %s\n", i, init_args[pipe_index + i + 1]);
+        args_right[i] = init_args[pipe_index + i + 1];
+    }
+    args_right[argc-pipe_index] = NULL;
+
+    int pipefd[2];
+    pid_t child1_pid;
+    char buf;
+    
+    if (pipe(pipefd) == -1) {
+        perror("pipe had an error");
+    }
+    else {
+        child1_pid = fork();
+        if (child1_pid == -1) {
+            perror("fork");
+            exit(EXIT_FAILURE);
         }
-        c++;
-    }
-   output_string[c] = '\0';
+        
+        if (child1_pid == 0) {    
+            /*
+            *
+            * READ SIDE
+            * 
+            * */
 
-    pid_t cpid;
-    int ofd;
-    cpid = fork(); 
+            // close(pipefd[1]);
+            // int string_size = 1;
+            // char* pipe_output;
+            // while (read(pipefd[0], &buf, 1) > 0) {
+            //     char temp_word[] = pipe_output + buf;
+            //     pipe_output = temp_word;
+            // }
+            // close(pipefd[0]);
 
-    if (cpid == 0) { 
-        ofd = creat(output_string, 0644);
-        execlp(command_string, command_string, (char *)NULL);
-    }
+            close(pipefd[1]); 
+            dup2(pipefd[0], STDIN_FILENO); 
+            close(pipefd[0]); 
+            // if (input_index != -1) {
 
-    wait((int *)NULL);
-}
+            //     args[input_index] = NULL;
 
-void processInputCommand(char* commandString, int input_index, int end_index) {
-    int input_length = end_index - input_index;
+            //     char* input_string = args[input_index + 1];
+            //     int ofd;
 
-    char command_string[input_length + 1];
+            //     ofd = open(input_string, 0644);
+            //     dup2(ofd, STDIN_FILENO);
+            // }
 
-    int b = 0;
+            // if (output_index != -1) {
 
-    while (b < input_index - 1) 
-    {
-        command_string[b] = commandString[b];
-        b++;
-    }
-    command_string[b] = '\0';
+            //     args[output_index] = NULL;
 
-    char input_string[input_length + 1];
+            //     char* output_string = args[output_index + 1];
+            //     int ofd;
+            //     ofd = creat(output_string, 0644);
+            //     dup2(ofd, STDOUT_FILENO);
+            // }
 
-    int a = 0;
-    int c = 1;
-    while (c < input_length) 
-    {
-        if (commandString[input_index + c] != ' ') 
-        {
-            input_string[a] = commandString[input_index+c];
-            a++;
+            // if (error_index != -1) {
+
+            //     args[error_index] = NULL;
+
+            //     char* error_string = args[error_index + 1];
+            //     int ofd;
+            //     ofd = creat(error_string, 0644);
+            //     dup2(ofd, STDERR_FILENO);
+            // }
+
+            execvp(args_left[0], args_left);
+        } 
+        else {   
+            /*
+            *
+            * WRITE SIDE
+            * 
+            * */         
+
+           
+            close(pipefd[0]); 
+            dup2(pipefd[1], STDOUT_FILENO); 
+            close(pipefd[1]);  
+            // if (input_index != -1) {
+
+            //     args[input_index] = NULL;
+
+            //     char* input_string = args[input_index + 1];
+            //     int ofd;
+
+            //     ofd = open(input_string, 0644);
+            //     dup2(ofd, STDIN_FILENO);
+            // }
+
+            // if (output_index != -1) {
+
+            //     args[output_index] = NULL;
+
+            //     char* output_string = args[output_index + 1];
+            //     int ofd;
+            //     ofd = creat(output_string, 0644);
+            //     dup2(ofd, STDOUT_FILENO);
+            // }
+
+            // if (error_index != -1) {
+
+            //     args[error_index] = NULL;
+
+            //     char* error_string = args[error_index + 1];
+            //     int ofd;
+            //     ofd = creat(error_string, 0644);
+            //     dup2(ofd, STDERR_FILENO);
+            // }
+
+            execvp(args_right[0], args_right);
         }
-        c++;
     }
-    input_string[c] = '\0';
-
-    pid_t cpid;
-    int ofd;
-    cpid = fork(); 
-
-    if (cpid == 0) { 
-        ofd = open(input_string, 0644);
-        dup2(ofd,0);
-        execlp(command_string, command_string, (char *)NULL);
-    }
-
-    wait((int *)NULL);
 }
 
 int main(){
@@ -157,7 +207,7 @@ int main(){
         int output_index = -1;
         int error_index = -1;
 
-        char argv[100][35]; 
+        char argv[100][50]; 
         int j,ctr;
         
         j=0; ctr=0;
@@ -190,14 +240,14 @@ int main(){
             }
         }
 
-        char **args = malloc((ctr * sizeof(char *)) + 1);	
+        char **args = malloc((ctr  + 1)* sizeof(char *));	
 
         for (int i = 0; i < ctr; i++) {
             args[i] = argv[i];
         }
 
         if (pipe_index != -1) {
-            //process two separate commands
+            processPipeCommand(args, ctr, pipe_index);
         }
         else {
             processSingleCommand(args, ctr, input_index, output_index, error_index);
