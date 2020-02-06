@@ -60,8 +60,8 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
 
 void processPipeCommand(char** init_args, int argc, int pipe_index) {
 
-    char **args_left = malloc((pipe_index + 1) * sizeof(char *));
-    char **args_right = malloc(((argc - pipe_index) + 1) * sizeof(char *));
+    char **args_left = malloc((argc) * sizeof(char *));
+    char **args_right = malloc((argc) * sizeof(char *));
 
     int left_input = -1;
     int left_output = -1;
@@ -72,20 +72,20 @@ void processPipeCommand(char** init_args, int argc, int pipe_index) {
     int right_error = -1;
 
     for (int i = 0; i < pipe_index; i++) {
-        printf("args_left[%d]: %s\n", i, init_args[i]);
         args_left[i] = init_args[i];
+        printf("args_left[%d]: %s\n", i, args_left[i]);
     }
     args_left[pipe_index] = NULL;
 
     for (int i = 0; i < (argc - pipe_index) - 1; i++) {
-
-        printf("args_right[%d]: %s\n", i, init_args[pipe_index + i + 1]);
         args_right[i] = init_args[pipe_index + i + 1];
+        printf("args_right[%d]: %s\n", i, args_right[i]);
     }
-    args_right[argc-pipe_index] = NULL;
-
+    args_right[(argc - pipe_index) - 1] = NULL;
+    
     int pipefd[2];
     pid_t child1_pid;
+    pid_t child2_pid;
     char buf;
     
     if (pipe(pipefd) == -1) {
@@ -97,102 +97,41 @@ void processPipeCommand(char** init_args, int argc, int pipe_index) {
             perror("fork");
             exit(EXIT_FAILURE);
         }
-        
-        if (child1_pid == 0) {    
+        else if (child1_pid == 0) {    
             /*
             *
-            * READ SIDE
+            * WRITE SIDE
             * 
             * */
-
-            // close(pipefd[1]);
-            // int string_size = 1;
-            // char* pipe_output;
-            // while (read(pipefd[0], &buf, 1) > 0) {
-            //     char temp_word[] = pipe_output + buf;
-            //     pipe_output = temp_word;
-            // }
-            // close(pipefd[0]);
-
-            close(pipefd[1]); 
-            dup2(pipefd[0], STDIN_FILENO); 
             close(pipefd[0]); 
-            // if (input_index != -1) {
-
-            //     args[input_index] = NULL;
-
-            //     char* input_string = args[input_index + 1];
-            //     int ofd;
-
-            //     ofd = open(input_string, 0644);
-            //     dup2(ofd, STDIN_FILENO);
-            // }
-
-            // if (output_index != -1) {
-
-            //     args[output_index] = NULL;
-
-            //     char* output_string = args[output_index + 1];
-            //     int ofd;
-            //     ofd = creat(output_string, 0644);
-            //     dup2(ofd, STDOUT_FILENO);
-            // }
-
-            // if (error_index != -1) {
-
-            //     args[error_index] = NULL;
-
-            //     char* error_string = args[error_index + 1];
-            //     int ofd;
-            //     ofd = creat(error_string, 0644);
-            //     dup2(ofd, STDERR_FILENO);
-            // }
-
+            dup2(pipefd[1], STDOUT_FILENO); 
+            close(pipefd[1]); 
+            
             execvp(args_left[0], args_left);
         } 
         else {   
             /*
             *
-            * WRITE SIDE
+            * READ SIDE
             * 
-            * */         
+            * */        
 
-           
-            close(pipefd[0]); 
-            dup2(pipefd[1], STDOUT_FILENO); 
-            close(pipefd[1]);  
-            // if (input_index != -1) {
+            child2_pid = fork();
 
-            //     args[input_index] = NULL;
+            if (child2_pid == -1) {
+                printf("Child 2 had a problem\n");
+            }
+            else if (child2_pid == 0) {
 
-            //     char* input_string = args[input_index + 1];
-            //     int ofd;
-
-            //     ofd = open(input_string, 0644);
-            //     dup2(ofd, STDIN_FILENO);
-            // }
-
-            // if (output_index != -1) {
-
-            //     args[output_index] = NULL;
-
-            //     char* output_string = args[output_index + 1];
-            //     int ofd;
-            //     ofd = creat(output_string, 0644);
-            //     dup2(ofd, STDOUT_FILENO);
-            // }
-
-            // if (error_index != -1) {
-
-            //     args[error_index] = NULL;
-
-            //     char* error_string = args[error_index + 1];
-            //     int ofd;
-            //     ofd = creat(error_string, 0644);
-            //     dup2(ofd, STDERR_FILENO);
-            // }
-
-            execvp(args_right[0], args_right);
+                close(pipefd[1]); 
+                dup2(pipefd[0], STDIN_FILENO); 
+                close(pipefd[0]);  
+                
+                execvp(args_right[0], args_right);
+            }
+            else {
+                wait((int *)NULL);
+            }
         }
     }
 }

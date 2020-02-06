@@ -81,6 +81,14 @@ void execArgsPiped(char** parsed, char** parsedpipe)
     // 0 is read end, 1 is write end 
     int pipefd[2];  
     pid_t p1, p2; 
+
+    for (int i = 0; i < 2; i++) {
+        printf("parsed[%d]: %s\n", i, parsed[i]);
+    }
+
+    for (int i = 0; i < 5; i++) {
+        printf("parsed[%d]: %s\n", i, parsedpipe[i]);
+    }
   
     if (pipe(pipefd) < 0) { 
         printf("\nPipe could not be initialized"); 
