@@ -12,7 +12,7 @@
 
 #define	MAXLINE	4096
 
-int pid_ch1, pid_ch2, ppid;
+int pid_ch1, ppid;
 
 static void sig_int(int signo) {
   printf("Sending signals to group:%d\n",pid_ch1);
@@ -27,10 +27,18 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
 
     args[argc] = NULL;
 
-    pid_ch1 = fork();
-    if (pid_ch1 > 0) 
+    int cpid;
+
+    cpid = fork();
+    if (cpid > 0) 
     {
         // Parent
+
+        printf("Former child process: %d\n",pid_ch1);
+
+        pid_ch1 = cpid;
+
+        printf("Now child process: %d\n",pid_ch1);
 
         if (signal(SIGINT, sig_int) == SIG_ERR)
             printf("signal(SIGINT) error");
