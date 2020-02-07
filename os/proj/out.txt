@@ -1,1 +1,17 @@
-these are the contents of in.txt
+dup1
+dup1.c
+dup_test.c
+in.txt
+Makefile
+o_shell
+other_shell2.c
+out.txt
+pdfexec.c
+pipe
+pipe_ex2.c
+pipe_ex.c
+scratch.txt
+sig_ex3.c
+yash
+yash.c
+yash.o
