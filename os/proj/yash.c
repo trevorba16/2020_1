@@ -12,34 +12,25 @@
 
 #define	MAXLINE	4096
 
-int pid_ch1, ppid;
+int pid_ch1, pid_ch2, ppid, status;
+
 
 static void sig_int(int signo) {
-  printf("Sending signals to group:%d\n",pid_ch1);
+//   printf("Sending signals to group:%d\n",pid_ch1);
   kill(-pid_ch1,SIGINT);
 }
 static void sig_tstp(int signo) {
-  printf("Sending SIGTSTP to group:%d\n",pid_ch1); 
+//   printf("Sending SIGTSTP to group:%d\n",pid_ch1); 
   kill(-pid_ch1,SIGTSTP);
 }
 
 void processSingleCommand(char** args, int argc, int input_index, int output_index, int error_index) {
-
     args[argc] = NULL;
 
-    int cpid;
-
-    cpid = fork();
-    if (cpid > 0) 
+    pid_ch1 = fork();
+    if (pid_ch1 > 0) 
     {
         // Parent
-
-        printf("Former child process: %d\n",pid_ch1);
-
-        pid_ch1 = cpid;
-
-        printf("Now child process: %d\n",pid_ch1);
-
         if (signal(SIGINT, sig_int) == SIG_ERR)
             printf("signal(SIGINT) error");
         if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
@@ -48,9 +39,8 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
         int count = 0;
         while (count < 1) 
         {
-            int status;
-            ppid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
-            printf("waiting\n");
+            ppid = waitpid(-1, &status, WUNTRACED);
+            // printf("waiting\n");
             
             if (ppid == -1) 
             {
@@ -60,26 +50,24 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
 
             if (WIFEXITED(status)) 
             {
-                printf("child %d exited, status=%d\n", ppid, WEXITSTATUS(status));count++;
+                // printf("child %d exited, status=%d\n", ppid, WEXITSTATUS(status));
+                count++;
             } 
             else if (WIFSIGNALED(status)) 
             {
-                printf("child %d killed by signal %d\n", ppid, WTERMSIG(status));count++;
+                // printf("child %d killed by signal %d\n", ppid, WTERMSIG(status));
+                count++;
             } 
             else if (WIFSTOPPED(status)) {
-                printf("%d stopped by signal %d\n", ppid,WSTOPSIG(status));
+                // printf("%d stopped by signal %d\n", ppid,WSTOPSIG(status));
+                count++;
             } else if (WIFCONTINUED(status)) {
-                printf("Continuing %d\n",ppid);
+                // printf("Continuing %d\n",ppid);
             }
         }
     }
-    else if (cpid == 0) {
+    else if (pid_ch1 == 0) {
         // Child
-        // setsid();
-        int prg = getpgrp();
-
-        printf("Process group: %d\n", prg);
-
         if (input_index != -1) {
 
             args[input_index] = NULL;
@@ -112,6 +100,7 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
         }
 
         execvp(args[0], args);
+        exit(0);
     }
 }
 
@@ -163,23 +152,21 @@ void processPipeCommand(char** init_args, int argc, int pipe_index) {
     args_right[(argc - pipe_index) - 1] = NULL;
     
     int pipefd[2];
-    pid_t child1_pid;
-    pid_t child2_pid;
     char buf;
     
     if (pipe(pipefd) == -1) {
         perror("pipe had an error");
     }
     else {
-        child1_pid = fork();
-        if (child1_pid == -1) {
+        pid_ch1 = fork();
+        if (pid_ch1 == -1) {
             perror("fork");
             exit(EXIT_FAILURE);
         }
-        else if (child1_pid == 0) {    
+        if (pid_ch1 == 0) {    
             /*
             *
-            * WRITE SIDE
+            * WRITE SIDE / Child 1
             * 
             * */
             close(pipefd[0]); 
@@ -218,6 +205,7 @@ void processPipeCommand(char** init_args, int argc, int pipe_index) {
             }
 
             execvp(args_left[0], args_left);
+            exit(0);
         } 
         else {   
             /*
@@ -226,12 +214,17 @@ void processPipeCommand(char** init_args, int argc, int pipe_index) {
             * 
             * */        
 
-            child2_pid = fork();
+            pid_ch2 = fork();
 
-            if (child2_pid == -1) {
+            if (pid_ch2 == -1) {
                 printf("Child 2 had a problem\n");
+                exit(EXIT_FAILURE);
             }
-            else if (child2_pid == 0) {
+            if (pid_ch2 == 0) {
+
+                // Child 2
+                sleep(1);
+                setpgid(0, pid_ch1);
 
                 close(pipefd[1]); 
                 dup2(pipefd[0], STDIN_FILENO); 
@@ -269,9 +262,44 @@ void processPipeCommand(char** init_args, int argc, int pipe_index) {
                 }
 
                 execvp(args_right[0], args_right);
+                exit(0);
             }
             else {
-                wait((int *)NULL);
+                // Parent
+                if (signal(SIGINT, sig_int) == SIG_ERR)
+                    printf("signal(SIGINT) error");
+                if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
+                    printf("signal(SIGTSTP) error");
+
+                int count = 0;
+                while (count < 2) 
+                {
+                    ppid = waitpid(-1, &status, WUNTRACED);
+                     printf("waiting\n");
+                    
+                    if (ppid == -1) 
+                    {
+                        perror("waitpid");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    if (WIFEXITED(status)) 
+                    {
+                         printf("child %d exited, status=%d\n", ppid, WEXITSTATUS(status));
+                        count++;
+                    } 
+                    else if (WIFSIGNALED(status)) 
+                    {
+                         printf("child %d killed by signal %d\n", ppid, WTERMSIG(status));
+                        count++;
+                    } 
+                    else if (WIFSTOPPED(status)) {
+                         printf("%d stopped by signal %d\n", ppid,WSTOPSIG(status));
+                        count++;
+                    } else if (WIFCONTINUED(status)) {
+                         printf("Continuing %d\n",ppid);
+                    }
+                }
             }
         }
     }
@@ -281,6 +309,8 @@ int main(){
     char *inString;
 
     while(inString = readline("$ ")){
+        pid_ch1 = -1;
+        pid_ch2 = -1;
         int input_length = strlen(inString);
         int pipe_index = -1;
         int input_index = -1;
