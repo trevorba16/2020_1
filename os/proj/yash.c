@@ -11,26 +11,54 @@
 #include <sys/wait.h>
 
 #define	MAXLINE	4096
+#define MAX_JOBS 20
+
+struct job
+{
+    int pid;
+    int run_status; // 1 is running, 0 is stopped
+    int job_order;
+    char **args;
+};
 
 int pid_ch1, pid_ch2, ppid, status;
+struct job job_array[20];
 
 
-static void sig_int(int signo) {
+static void sig_int(int signo) 
+{
 //   printf("Sending signals to group:%d\n",pid_ch1);
-  kill(-pid_ch1,SIGINT);
+  kill(pid_ch1,SIGINT);
 }
-static void sig_tstp(int signo) {
+static void sig_tstp(int signo) 
+{
 //   printf("Sending SIGTSTP to group:%d\n",pid_ch1); 
-  kill(-pid_ch1,SIGTSTP);
+    kill(pid_ch1,SIGTSTP);
+    struct job new_job;
+
+    new_job.pid = pid_ch1;
+    new_job.run_status = 16;
+    new_job.job_order = 17;
+
+    for (int i = 0; i < MAX_JOBS; i++) 
+    {
+        if job_array[i] 
+
+    }
+
 }
 
-void processSingleCommand(char** args, int argc, int input_index, int output_index, int error_index) {
+void processSingleCommand(char** args, int argc, int input_index, int output_index, int error_index, int background_index) 
+{
     args[argc] = NULL;
 
     pid_ch1 = fork();
     if (pid_ch1 > 0) 
     {
         // Parent
+
+        setpgid(pid_ch1, pid_ch1);
+
         if (signal(SIGINT, sig_int) == SIG_ERR)
             printf("signal(SIGINT) error");
         if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
@@ -50,24 +78,28 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
 
             if (WIFEXITED(status)) 
             {
-                // printf("child %d exited, status=%d\n", ppid, WEXITSTATUS(status));
+                //printf("child %d exited, status=%d\n", ppid, WEXITSTATUS(status));
                 count++;
             } 
             else if (WIFSIGNALED(status)) 
             {
-                // printf("child %d killed by signal %d\n", ppid, WTERMSIG(status));
+                //printf("child %d killed by signal %d\n", ppid, WTERMSIG(status));
                 count++;
             } 
             else if (WIFSTOPPED(status)) {
-                // printf("%d stopped by signal %d\n", ppid,WSTOPSIG(status));
+                //printf("%d stopped by signal %d\n", ppid,WSTOPSIG(status));
                 count++;
             } else if (WIFCONTINUED(status)) {
-                // printf("Continuing %d\n",ppid);
+                //printf("Continuing %d\n",ppid);
             }
         }
     }
     else if (pid_ch1 == 0) {
         // Child
+
+        pid_t pid = getpid();
+        setpgid(pid, pid);
+
         if (input_index != -1) {
 
             args[input_index] = NULL;
@@ -104,7 +136,8 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
     }
 }
 
-void processPipeCommand(char** init_args, int argc, int pipe_index) {
+void processPipeCommand(char** init_args, int argc, int pipe_index, int background_index) 
+{
 
     char **args_left = malloc((argc) * sizeof(char *));
     char **args_right = malloc((argc) * sizeof(char *));
@@ -275,7 +308,7 @@ void processPipeCommand(char** init_args, int argc, int pipe_index) {
                 while (count < 2) 
                 {
                     ppid = waitpid(-1, &status, WUNTRACED);
-                     printf("waiting\n");
+                    // printf("waiting\n");
                     
                     if (ppid == -1) 
                     {
@@ -285,19 +318,19 @@ void processPipeCommand(char** init_args, int argc, int pipe_index) {
 
                     if (WIFEXITED(status)) 
                     {
-                         printf("child %d exited, status=%d\n", ppid, WEXITSTATUS(status));
+                        // printf("child %d exited, status=%d\n", ppid, WEXITSTATUS(status));
                         count++;
                     } 
                     else if (WIFSIGNALED(status)) 
                     {
-                         printf("child %d killed by signal %d\n", ppid, WTERMSIG(status));
+                        // printf("child %d killed by signal %d\n", ppid, WTERMSIG(status));
                         count++;
                     } 
                     else if (WIFSTOPPED(status)) {
-                         printf("%d stopped by signal %d\n", ppid,WSTOPSIG(status));
+                        // printf("%d stopped by signal %d\n", ppid,WSTOPSIG(status));
                         count++;
                     } else if (WIFCONTINUED(status)) {
-                         printf("Continuing %d\n",ppid);
+                        // printf("Continuing %d\n",ppid);
                     }
                 }
             }
@@ -305,10 +338,69 @@ void processPipeCommand(char** init_args, int argc, int pipe_index) {
     }
 }
 
-int main(){
+int getMostRecentBackground()
+{
+    printf("Starting getMostRecentBackground()\n");
+    int max_process = -1;
+    int max_job_order = -1;
+
+    
+    for (e = list_begin (&job_list); e != list_end (&job_list);
+	  e = list_next (e))
+     {
+        struct job *j =
+        printf("Made job\n");
+        printf("run_status: %d\n", j->run_status);
+        printf("jobOrder: %d\n", j->job_order);
+        printf("pid: %d\n", j->pid);
+        if (j->run_status == 0 && j->job_order > max_job_order)
+        {
+            
+            max_job_order = j->job_order;
+
+            max_process = j->pid;
+        }
+    }
+    return max_process;
+}
+
+void startJob(int jobOrder) {
+
+}
+
+void processForegroundCommand() 
+{
+    int max_pid = getMostRecentBackground();
+    //printf("Waiting for: %d\n", max_pid);
+    //int fg_pid = waitpid(max_pid, &status, WUNTRACED);
+
+    
+    // if (WIFEXITED(status)) 
+    // {
+        
+    // } 
+    // else if (WIFSIGNALED(status)) 
+    // {
+        
+    // } 
+    // else if (WIFSTOPPED(status)) 
+    // {
+        printf("Continuing: %d\n", max_pid);
+        kill(max_pid, SIGCONT);
+        printf("Continued: %d\n", max_pid);
+    // } 
+    // else if (WIFCONTINUED(status)) 
+    // {
+
+    // }
+}
+
+int main()
+{
     char *inString;
 
     while(inString = readline("$ ")){
+
         pid_ch1 = -1;
         pid_ch2 = -1;
         int input_length = strlen(inString);
@@ -316,6 +408,7 @@ int main(){
         int input_index = -1;
         int output_index = -1;
         int error_index = -1;
+        int background_index = -1;
 
         char argv[100][50]; 
         int j,ctr;
@@ -323,46 +416,90 @@ int main(){
         j=0; ctr=0;
         for(int i=0;i<=(strlen(inString));i++) {
 
-            if(inString[i] == '|') {
+            if(inString[i] == '|') 
+            {
                 pipe_index = ctr;
             }
-            if(inString[i] == '<') {
+            if(inString[i] == '<') 
+            {
                 input_index = ctr;
             }
-            if(inString[i] == '>') {
-                if (inString[i-1] == '2') {
+            if(inString[i] == '>') 
+            {
+                if (inString[i-1] == '2') 
+                {
                     error_index = ctr;
                 }
                 else  {
                     output_index = ctr;
                 } 
             }
+            if(inString[i] == '&') 
+            {
+                background_index = i;
+            }
             
             // if space or NULL found, assign NULL into newString[ctr]
-            if(inString[i]==' '||inString[i]=='\0') {
+            if(inString[i]==' '||inString[i]=='\0') 
+            {
                 argv[ctr][j]='\0';
                 ctr++;  //for next word
                 j=0;    //for next word, init index to 0
             }
-            else {
+            else 
+            {
                 argv[ctr][j]=inString[i];
                 j++;
             }
         }
 
+        int foreground = 0;
+        int background = 0;
+        int jobs = 0;
+
         char **args = malloc((ctr  + 1)* sizeof(char *));	
 
-        for (int i = 0; i < ctr; i++) {
+        for (int i = 0; i < ctr; i++) 
+        {
+            
             args[i] = argv[i];
+            if (strcmp(argv[i],"fg") == 0) 
+            {
+                foreground = 1;
+            }
+            else if (strcmp(argv[i],"bg") == 0)
+            {
+                background = 1;
+            }
+            else if (strcmp(argv[i],"jobs") == 0)
+            {
+                jobs = 1;
+            }
         }
 
-        if (pipe_index != -1) {
-            processPipeCommand(args, ctr, pipe_index);
+        if (foreground == 1) 
+        {
+            processForegroundCommand();
         }
-        else {
-            processSingleCommand(args, ctr, input_index, output_index, error_index);
+        else if (background == 1)
+        {
+            //processBackgroundCommand();
+        }
+        else if (jobs == 1)
+        {
+            //processJobsCommand();
+        }
+        else 
+        {
+            if (pipe_index != -1) 
+            {
+                processPipeCommand(args, ctr, pipe_index, background_index);
+            }
+            else 
+            {
+                processSingleCommand(args, ctr, input_index, output_index, error_index, background_index);
+            }
         }
     }	
-
     return 0;
 }
