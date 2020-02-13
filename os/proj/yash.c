@@ -16,7 +16,7 @@
 struct job
 {
     int pid;
-    int run_status; // 1 is running, 0 is stopped
+    int run_status; // 1 is running, 0 is stopped // 2 is done
     int job_order;
     char args[2000];
 };
@@ -33,17 +33,27 @@ static void sig_ignore(int signo)
 
 static void sig_int(int signo) 
 {
-    printf("Sending signals to group:%d\n",pid_ch1);
-    sleep(10);
     kill(pid_ch1,SIGINT);
 }
 static void sig_tstp(int signo) 
 {
     kill(pid_ch1,SIGTSTP);
+    for (int i = 0; i < MAX_JOBS; i++) 
+    {
+        if (job_array[i].pid == pid_ch1) 
+        {
+            job_array[i].run_status = 0;
+            break;
+        }
+    }
+}
+
+void addJobToLog() 
+{
     struct job new_job;
 
     new_job.pid = pid_ch1;
-    new_job.run_status = 0;
+    new_job.run_status = 1;
     new_job.job_order = job_num++;
     strcpy(new_job.args, inString);
 
@@ -57,7 +67,14 @@ static void sig_tstp(int signo)
             break;
         }
     }
+}
 
+void removeJobFromLog(int rem_index)
+{
+    memset(job_array[rem_index].args, 0, 2000);
+    job_array[rem_index].job_order = -1;
+    job_array[rem_index].pid = -1;
+    job_array[rem_index].run_status = -1;
 }
 
 void executeChildProcess(char** args, int argc, int input_index, int output_index, int error_index, int background_index) 
@@ -114,6 +131,7 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
     if (pid_ch1 > 0) 
     {
         // Parent
+        addJobToLog();
 
         if (background_index != -1) {
             kill(pid_ch1, SIGTSTP);
@@ -141,6 +159,7 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
 
                 if (WIFEXITED(status)) 
                 {
+                    removeJobFromLog(ppid);
                     //printf("child %d exited, status=%d\n", ppid, WEXITSTATUS(status));
                     count++;
                 } 
@@ -153,15 +172,13 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
                     //printf("%d stopped by signal %d\n", ppid,WSTOPSIG(status));
                     count++;
                 } else if (WIFCONTINUED(status)) {
-                    printf("Continuing %d\n",ppid);
                 }
             }
         }
     }
     else if (pid_ch1 == 0) {
         // Child
-
-        
+        executeChildProcess(args, argc, input_index, output_index, error_index, background_index);
     }
 }
 
@@ -400,8 +417,7 @@ void processForegroundCommand()
 {
     int max_index = getMostRecentBackground();
 
-    struct job j = job_array[max_index];
-    int max_pid = j.pid;
+    int max_pid = job_array[max_index].pid;
     // printf("Waiting for: %d\n", max_pid);
     setpgid(max_pid, max_pid);
     int count = 0;
@@ -418,6 +434,7 @@ void processForegroundCommand()
 
         if (WIFEXITED(status)) 
         {
+            removeJobFromLog(max_index);
             count++;
         } 
         else if (WIFSIGNALED(status)) 
@@ -426,13 +443,10 @@ void processForegroundCommand()
             count++;
         } 
         else if (WIFSTOPPED(status)) {
-            printf("%s\n", j.args);
+            printf("%s\n", job_array[max_index].args);
             kill(max_pid, SIGCONT);
+            job_array[max_index].run_status = 1;
             count++;
-            memset(job_array[max_index].args, 0, 2000);
-            job_array[max_index].job_order = -1;
-            job_array[max_index].pid = -1;
-            job_array[max_index].run_status = -1;
         } else if (WIFCONTINUED(status)) {
             //printf("Continuing %d\n",ppid);
         }
