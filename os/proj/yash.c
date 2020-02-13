@@ -18,121 +18,150 @@ struct job
     int pid;
     int run_status; // 1 is running, 0 is stopped
     int job_order;
-    char **args;
+    char args[2000];
 };
 
-int pid_ch1, pid_ch2, ppid, status;
+int pid_ch1, pid_ch2, ppid, job_num, status;
 struct job job_array[20];
 
+char *inString;
+
+static void sig_ignore(int signo)
+{
+
+}
 
 static void sig_int(int signo) 
 {
-//   printf("Sending signals to group:%d\n",pid_ch1);
-  kill(pid_ch1,SIGINT);
+    printf("Sending signals to group:%d\n",pid_ch1);
+    sleep(10);
+    kill(pid_ch1,SIGINT);
 }
 static void sig_tstp(int signo) 
 {
-//   printf("Sending SIGTSTP to group:%d\n",pid_ch1); 
     kill(pid_ch1,SIGTSTP);
     struct job new_job;
 
     new_job.pid = pid_ch1;
-    new_job.run_status = 16;
-    new_job.job_order = 17;
+    new_job.run_status = 0;
+    new_job.job_order = job_num++;
+    strcpy(new_job.args, inString);
 
     for (int i = 0; i < MAX_JOBS; i++) 
     {
-        if job_array[i] 
-
+        if (job_array[i].job_order == -1 
+            && job_array[i].pid == -1 
+            && job_array[i].run_status == -1) 
+        {
+            job_array[i] = new_job;
+            break;
+        }
     }
 
 }
 
-void processSingleCommand(char** args, int argc, int input_index, int output_index, int error_index, int background_index) 
+void executeChildProcess(char** args, int argc, int input_index, int output_index, int error_index, int background_index) 
 {
     args[argc] = NULL;
 
+    pid_t pid = getpid();
+    setpgid(pid, pid);
+
+    if (input_index != -1) {
+
+        args[input_index] = NULL;
+
+        char* input_string = args[input_index + 1];
+        int ofd;
+
+        ofd = open(input_string, 0644);
+        dup2(ofd, STDIN_FILENO);
+    }
+
+    if (output_index != -1) {
+
+        args[output_index] = NULL;
+
+        char* output_string = args[output_index + 1];
+        int ofd;
+        ofd = creat(output_string, 0644);
+        dup2(ofd, STDOUT_FILENO);
+    }
+
+    if (error_index != -1) {
+
+        args[error_index] = NULL;
+
+        char* error_string = args[error_index + 1];
+        int ofd;
+        ofd = creat(error_string, 0644);
+        dup2(ofd, STDERR_FILENO);
+    }
+
+    if (background_index != -1) 
+    {
+        printf("Background index: %d\n", background_index);
+        args[background_index] = NULL;
+    }
+
+    execvp(args[0], args);
+    exit(0);
+}
+
+void processSingleCommand(char** args, int argc, int input_index, int output_index, int error_index, int background_index) 
+{
     pid_ch1 = fork();
     if (pid_ch1 > 0) 
     {
         // Parent
 
-        setpgid(pid_ch1, pid_ch1);
+        if (background_index != -1) {
+            kill(pid_ch1, SIGTSTP);
+            kill(pid_ch1, SIGCONT);
+        }
+        else {
+            setpgid(pid_ch1, pid_ch1);
 
-        if (signal(SIGINT, sig_int) == SIG_ERR)
-            printf("signal(SIGINT) error");
-        if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
-            printf("signal(SIGTSTP) error");
+            if (signal(SIGINT, sig_int) == SIG_ERR)
+                printf("signal(SIGINT) error");
+            if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
+                printf("signal(SIGTSTP) error");
 
-        int count = 0;
-        while (count < 1) 
-        {
-            ppid = waitpid(-1, &status, WUNTRACED);
-            // printf("waiting\n");
-            
-            if (ppid == -1) 
+            int count = 0;
+            while (count < 1) 
             {
-                perror("waitpid");
-                exit(EXIT_FAILURE);
-            }
+                ppid = waitpid(-1, &status, WUNTRACED);
+                // printf("waiting\n");
+                
+                if (ppid == -1) 
+                {
+                    perror("waitpid");
+                    exit(EXIT_FAILURE);
+                }
 
-            if (WIFEXITED(status)) 
-            {
-                //printf("child %d exited, status=%d\n", ppid, WEXITSTATUS(status));
-                count++;
-            } 
-            else if (WIFSIGNALED(status)) 
-            {
-                //printf("child %d killed by signal %d\n", ppid, WTERMSIG(status));
-                count++;
-            } 
-            else if (WIFSTOPPED(status)) {
-                //printf("%d stopped by signal %d\n", ppid,WSTOPSIG(status));
-                count++;
-            } else if (WIFCONTINUED(status)) {
-                //printf("Continuing %d\n",ppid);
+                if (WIFEXITED(status)) 
+                {
+                    //printf("child %d exited, status=%d\n", ppid, WEXITSTATUS(status));
+                    count++;
+                } 
+                else if (WIFSIGNALED(status)) 
+                {
+                    //printf("child %d killed by signal %d\n", ppid, WTERMSIG(status));
+                    count++;
+                } 
+                else if (WIFSTOPPED(status)) {
+                    //printf("%d stopped by signal %d\n", ppid,WSTOPSIG(status));
+                    count++;
+                } else if (WIFCONTINUED(status)) {
+                    printf("Continuing %d\n",ppid);
+                }
             }
         }
     }
     else if (pid_ch1 == 0) {
         // Child
 
-        pid_t pid = getpid();
-        setpgid(pid, pid);
-
-        if (input_index != -1) {
-
-            args[input_index] = NULL;
-
-            char* input_string = args[input_index + 1];
-            int ofd;
-
-            ofd = open(input_string, 0644);
-            dup2(ofd, STDIN_FILENO);
-        }
-
-        if (output_index != -1) {
-
-            args[output_index] = NULL;
-
-            char* output_string = args[output_index + 1];
-            int ofd;
-            ofd = creat(output_string, 0644);
-            dup2(ofd, STDOUT_FILENO);
-        }
-
-        if (error_index != -1) {
-
-            args[error_index] = NULL;
-
-            char* error_string = args[error_index + 1];
-            int ofd;
-            ofd = creat(error_string, 0644);
-            dup2(ofd, STDERR_FILENO);
-        }
-
-        execvp(args[0], args);
-        exit(0);
+        
     }
 }
 
@@ -340,66 +369,97 @@ void processPipeCommand(char** init_args, int argc, int pipe_index, int backgrou
 
 int getMostRecentBackground()
 {
-    printf("Starting getMostRecentBackground()\n");
+    // printf("Starting getMostRecentBackground()\n");
     int max_process = -1;
     int max_job_order = -1;
+    int max_index = -1;
 
     
-    for (e = list_begin (&job_list); e != list_end (&job_list);
-	  e = list_next (e))
+    for (int i = 0; i < MAX_JOBS; i++)
      {
-        struct job *j =
-        printf("Made job\n");
-        printf("run_status: %d\n", j->run_status);
-        printf("jobOrder: %d\n", j->job_order);
-        printf("pid: %d\n", j->pid);
-        if (j->run_status == 0 && j->job_order > max_job_order)
+        if (job_array[i].job_order != -1 
+            && job_array[i].pid != -1 
+            && job_array[i].run_status != -1) 
         {
-            
-            max_job_order = j->job_order;
-
-            max_process = j->pid;
+            struct job j = job_array[i];
+            // printf("Made job\n");
+            // printf("run_status: %d\n", j.run_status);
+            // printf("jobOrder: %d\n", j.job_order);
+            // printf("pid: %d\n", j.pid);
+            if (j.run_status == 0 && j.job_order > max_job_order)
+            {
+                max_job_order = j.job_order;
+                max_index = i;
+            }
         }
     }
-    return max_process;
-}
-
-void startJob(int jobOrder) {
-
+    return max_index;
 }
 
 void processForegroundCommand() 
 {
-    int max_pid = getMostRecentBackground();
-    //printf("Waiting for: %d\n", max_pid);
-    //int fg_pid = waitpid(max_pid, &status, WUNTRACED);
+    int max_index = getMostRecentBackground();
 
-    
-    // if (WIFEXITED(status)) 
-    // {
+    struct job j = job_array[max_index];
+    int max_pid = j.pid;
+    // printf("Waiting for: %d\n", max_pid);
+    setpgid(max_pid, max_pid);
+    int count = 0;
+    while (count < 2) 
+    {
+        ppid = waitpid(-1, &status, WNOHANG | WUNTRACED | WCONTINUED);
+        // printf("waiting\n");
         
-    // } 
-    // else if (WIFSIGNALED(status)) 
-    // {
-        
-    // } 
-    // else if (WIFSTOPPED(status)) 
-    // {
-        printf("Continuing: %d\n", max_pid);
-        kill(max_pid, SIGCONT);
-        printf("Continued: %d\n", max_pid);
-    // } 
-    // else if (WIFCONTINUED(status)) 
-    // {
+        if (ppid == -1) 
+        {
+            perror("waitpid");
+            exit(EXIT_FAILURE);
+        }
 
-    // }
+        if (WIFEXITED(status)) 
+        {
+            count++;
+        } 
+        else if (WIFSIGNALED(status)) 
+        {
+            //printf("child %d killed by signal %d\n", ppid, WTERMSIG(status));
+            count++;
+        } 
+        else if (WIFSTOPPED(status)) {
+            printf("%s\n", j.args);
+            kill(max_pid, SIGCONT);
+            count++;
+            memset(job_array[max_index].args, 0, 2000);
+            job_array[max_index].job_order = -1;
+            job_array[max_index].pid = -1;
+            job_array[max_index].run_status = -1;
+        } else if (WIFCONTINUED(status)) {
+            //printf("Continuing %d\n",ppid);
+        }
+    }
 }
 
 int main()
 {
-    char *inString;
+    if (signal(SIGINT, sig_ignore) == SIG_ERR)
+        printf("signal(SIGINT) error");
+    if (signal(SIGTSTP, sig_ignore) == SIG_ERR)
+        printf("signal(SIGTSTP) error");
+
+    for (int i = 0; i < MAX_JOBS; i++) 
+    {
+        job_array[i].job_order = -1;
+        job_array[i].pid = -1;
+        job_array[i].run_status = -1;
+    }
+    job_num = 0;
 
     while(inString = readline("$ ")){
+
+        if (signal(SIGINT, SIG_DFL) == SIG_ERR)
+            printf("signal(SIGINT) error");
+        if (signal(SIGTSTP, SIG_DFL) == SIG_ERR)
+            printf("signal(SIGTSTP) error");
 
         pid_ch1 = -1;
         pid_ch2 = -1;
@@ -436,7 +496,7 @@ int main()
             }
             if(inString[i] == '&') 
             {
-                background_index = i;
+                background_index = ctr;
             }
             
             // if space or NULL found, assign NULL into newString[ctr]
@@ -457,7 +517,7 @@ int main()
         int background = 0;
         int jobs = 0;
 
-        char **args = malloc((ctr  + 1)* sizeof(char *));	
+        char **args = malloc((ctr  + 1)* sizeof(char *));
 
         for (int i = 0; i < ctr; i++) 
         {
@@ -500,6 +560,10 @@ int main()
                 processSingleCommand(args, ctr, input_index, output_index, error_index, background_index);
             }
         }
+        if (signal(SIGINT, sig_ignore) == SIG_ERR)
+            printf("signal(SIGINT) error");
+        if (signal(SIGTSTP, sig_ignore) == SIG_ERR)
+            printf("signal(SIGTSTP) error");
     }	
     return 0;
 }
