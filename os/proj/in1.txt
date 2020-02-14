@@ -1,9 +1,0 @@
-in1.txt
-in.txt
-list.c
-list.h
-Makefile
-out1.txt
-yash
-yash.c
-yash.o
