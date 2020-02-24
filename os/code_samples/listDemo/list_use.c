@@ -34,13 +34,13 @@ int main(int argc,char **argv) {
      a1.bar=1;a1.beer=42;
      a2.bar=2;a2.beer=24;
      a3.bar=0;a3.beer=10;
-     //list_push_front(&foo_list, &(a1.elem));
+     list_push_front(&foo_list, &(a1.elem));
          /* <-h<->1:42<->t-> */
      list_push_back(&foo_list, &(a3.elem));
         /* <-h<->1:42 <-> 0:10<->t-> */
      /* put in middle: a little complex. get the head, find its next
         which is 1:42, whose next is 0:10 and insert BEFORE it */
-     //list_insert(list_next(list_next(list_head(&foo_list))), &(a2.elem));
+     list_insert(list_next(list_next(list_head(&foo_list))), &(a2.elem));
        /* <-h<->1:42 <-> 2:24 <-> 0:10<->t-> */
      /* You could also do this to get the same effect: 
      list_insert(list_prev(list_tail(&foo_list)), &(a2.elem)); 
