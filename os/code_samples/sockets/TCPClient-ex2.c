@@ -106,30 +106,48 @@ int main(int argc, char **argv ) {
 	fprintf(stderr, "Can't find host %s\n", inet_ntoa(from.sin_addr));
     else
 	printf("(Name is : %s)\n", hp->h_name);
+
+    
+    // if( (rc=recv(sd, rbuf, sizeof(buf), 0)) < 0){
+    //         perror("receiving stream  message");
+    //         exit(-1);
+	//     }
+	//     if (rc > 0){
+	//         rbuf[rc]='\0';
+	//         printf("%s", rbuf);
+	//     }else {
+	//         printf("Disconnected..\n");
+	//         close (sd);
+	//         exit(0);
+	//     }
+
     childpid = fork();
     if (childpid == 0) {
-	GetUserInput();
+	    GetUserInput();
     }
-    
+    else
     /** get data from USER, send it SERVER,
       receive it from SERVER, display it back to USER  */
-    
-    for(;;) {
-	cleanup(rbuf);
-	if( (rc=recv(sd, rbuf, sizeof(buf), 0)) < 0){
-	    perror("receiving stream  message");
-	    exit(-1);
-	}
-	if (rc > 0){
-	    rbuf[rc]='\0';
-	    printf("Received: %s\n", rbuf);
-	}else {
-	    printf("Disconnected..\n");
-	    close (sd);
-	    exit(0);
-	}
+    for(;;) 
+    {
+        fflush(stdout);
+        cleanup(rbuf);
+        if( (rc=recv(sd, rbuf, sizeof(buf), 0)) < 0){
+            perror("receiving stream  message");
+            exit(-1);
+	    }
+	    if (rc > 0){
+            rbuf[rc]='\0';
+            // printf("rc is : %d\n", rc);
+            printf("%s", rbuf);
+            rc = 0;
+	    }else {
+	        printf("Disconnected..\n");
+	        close (sd);
+	        exit(0);
+	    }
 	
-  }
+    }
 }
 
 void cleanup(char *buf)
@@ -141,7 +159,7 @@ void cleanup(char *buf)
 void GetUserInput()
 {
     for(;;) {
-	printf("\nType anything followed by RETURN, or type CTRL-D to exit\n");
+	// printf("\n");
 	cleanup(buf);
 	rc=read(0,buf, sizeof(buf));
 	if (rc == 0) break;

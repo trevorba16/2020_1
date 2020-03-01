@@ -1,51 +1,279 @@
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <string.h>
-#include <signal.h>
+/**
+ * @file TCPServer-ex2.c 
+ * @brief The program creates a TCP socket in
+ * the inet domain and listens for connections from TCPClients, accept clients
+ * into private sockets, and fork an echo process to ``serve'' the
+ * client.  If [port] is not specified, the program uses any available
+ * port.  
+ * Run as: 
+ *     TCPServer-ex2 <port>
+ */
+/*
+NAME:        
+SYNOPSIS:    TCPServer [port]
 
+DESCRIPTION:  
+
+*/
+#include <stdio.h>
+/* socket(), bind(), recv, send */
+#include <sys/types.h>
+#include <sys/socket.h> /* sockaddr_in */
+#include <netinet/in.h> /* inet_addr() */
+#include <arpa/inet.h>
+#include <netdb.h> /* struct hostent */
+#include <string.h> /* memset() */
+#include <unistd.h> /* close() */
+#include <stdlib.h> /* exit() */
+#include <pthread.h>
+#include <signal.h>
 #include <fcntl.h>
-#include <readline/readline.h>
-#include <readline/history.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include "server_thread.h"
 
+#define MAXHOSTNAME 80
+#define NUM_THREADS 20
+#define BUFSIZE 2000
 #define	MAXLINE	4096
 #define MAX_JOBS 20
-#define BUFSIZE 2000
-// #pragma region GLOBAL VARIABLES
-// struct job
-// {
-//     int pid;
-//     int run_status; // 1 is running, 0 is stopped // 2 is done
-//     int job_order;
-//     int is_background; 
-//     char args[2000];
-// };
-// int pid_ch1, pid_ch2, ppid, job_num, status;
-// struct job job_array[20];
-// char *inString;
-// #pragma endregion
 
-// #pragma region FUNCTION DECLARATIONS
-// void setjobAsBackground(int pid);
-// void removeJobFromLog(int rem_index);
-// static void sig_ignore(int signo);
-// static void sig_int(int signo);
-// static void sig_tstp(int signo);
-// static void sig_int(int signo);
-// int addJobToLog(int is_background);
-// void executeChildProcess(char** args, int argc, int input_index, int output_index, int error_index, int background_index);
-// void processSingleCommand(char** args, int argc, int input_index, int output_index, int error_index, int background_index);
-// void processPipeCommand(char** init_args, int argc, int pipe_index, int background_index);
-// int getMostRecentBackground(int is_background);
-// void processForegroundCommand();
-// void processBackgroundCommand();
-// void processJobsCommand();
-// void printJob(int index, int is_bg);
-// void findAndPrintCompletedJobs();
-// #pragma endregion
+
+#pragma region CONNECTION
+#pragma region FUNCTION DECLARATIONS
+int current_thread;
+void reusePort(int sock);
+void * ServeClient(void * arg);
+void cleanup(char *buf);
+#pragma endregion
+
+typedef struct _client_thread_data
+{
+    int psd;
+    struct sockaddr_in from;
+} client_thread_data;
+
+int main(int argc, char **argv ) {
+    int   sd, psd;
+    struct   sockaddr_in server;
+    struct  hostent *hp, *gethostbyname();
+    struct sockaddr_in from;
+    int fromlen;
+    int length;
+    char ThisHost[80];
+    int pn;
+    pthread_t thr[NUM_THREADS];
+    client_thread_data thr_data[NUM_THREADS];
+
+    current_thread = 0;
+    
+    /* get TCPServer1 Host information, NAME and INET ADDRESS */
+    gethostname(ThisHost, MAXHOSTNAME);
+    /* OR strcpy(ThisHost,"localhost"); */
+    
+    printf("----TCP/Server running at host NAME: %s\n", ThisHost);
+    if  ( (hp = gethostbyname(ThisHost)) == NULL ) {
+      fprintf(stderr, "Can't find host %s\n", argv[1]);
+      exit(-1);
+    }
+    bcopy ( hp->h_addr, &(server.sin_addr), hp->h_length);
+    printf("    (TCP/Server INET ADDRESS is: %s )\n", inet_ntoa(server.sin_addr));
+
+    
+    
+    /** Construct name of socket */
+    server.sin_family = AF_INET;
+    /* OR server.sin_family = hp->h_addrtype; */
+    
+    server.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (argc == 1)
+        server.sin_port = htons(3826);  
+    else  {
+        pn = htons(3826); 
+        server.sin_port =  pn;
+    }
+    
+    /** Create socket on which to send  and receive */
+    
+    sd = socket (AF_INET, SOCK_STREAM, IPPROTO_TCP); 
+    /* OR sd = socket (hp->h_addrtype,SOCK_STREAM,0); */
+    if (sd<0) {
+        perror("opening stream socket");
+        exit(-1);
+    }
+    /** this allow the server to re-start quickly instead of waiting
+	for TIME_WAIT which can be as large as 2 minutes */
+    reusePort(sd);
+    if ( bind( sd, (struct sockaddr *) &server, sizeof(server) ) < 0 ) {
+        close(sd);
+        perror("binding name to stream socket");
+        exit(-1);
+    }
+    
+    /** get port information and  prints it out */
+    length = sizeof(server);
+    if ( getsockname (sd, (struct sockaddr *)&server,&length) ) {
+        perror("getting socket name");
+        exit(0);
+    }
+    printf("Server Port is: %d\n", ntohs(server.sin_port));
+    
+    /** accept TCP connections from clients and fork a process to serve each */
+    listen(sd,4);
+    fromlen = sizeof(from);
+    for(;;){
+        psd  = accept(sd, (struct sockaddr *)&from, &fromlen);
+        thr_data[current_thread].from = from;
+        thr_data[current_thread].psd = psd;
+        pthread_create(&thr[current_thread], NULL, ServeClient, &thr_data[current_thread]);
+	}
+}
+
+void * ServeClient(void * arg) {
+    client_thread_data *client_info = (client_thread_data *) arg;
+    char buf[BUFSIZE];
+    int rc;
+    struct  hostent *hp, *gethostbyname();
+    struct job client_jobs[20];
+    char process_output[BUFSIZE] = {0};
+
+    initializeJobs(client_jobs);
+
+
+    if (signal(SIGCHLD, sig_child) == SIG_ERR)
+        printf("signal(SIGCHLD) error");
+
+    // printf("Serving %s:%d\n", inet_ntoa(client_info->from.sin_addr), ntohs(client_info->from.sin_port));
+    if ((hp = gethostbyaddr((char *)&client_info->from.sin_addr.s_addr,
+			    sizeof(client_info->from.sin_addr.s_addr),AF_INET)) == NULL)
+	{
+        fprintf(stderr, "Can't find host %s\n", inet_ntoa(client_info->from.sin_addr));
+    }
+    else
+    {
+	    // printf("(Name is : %s)\n", hp->h_name);
+    }
+    /**  get data from  client and send it back */
+    for(;;){
+        char * hash = "# ";
+
+
+        if (send(client_info->psd, hash, 2, 0) <0 )
+            perror("Couldn't send initial prompt");
+
+        // printf("\n...server is waiting...\n");
+        if( (rc=recv(client_info->psd, buf, sizeof(buf), 0)) < 0){
+            perror("receiving stream  message");
+            exit(-1);
+        }
+        if (rc > 0){
+            buf[rc - 1]='\0';
+            char * inString = buf;
+
+            // printf("======================================================\n");
+            // printf("=====================BEFORE PROCESS===================\n");
+            // printf("======================================================\n");
+
+            // for (int i = 0; i < 20; i++) 
+            // {
+            //     struct job j = client_jobs[i];
+            //     printf("order: %d\n", j.job_order);
+            //     printf("args:  %s\n", j.args);
+            //     printf("run: %d\n", j.run_status);
+            // }
+
+            processStarter(inString, process_output);
+
+            // printf("======================================================\n");
+            // printf("=====================AFTER PROCESS====================\n");
+            // printf("======================================================\n");
+
+            // for (int i = 0; i < 20; i++) 
+            // {
+            //     struct job j = client_jobs[i];
+            //     printf("order: %d\n", j.job_order);
+            //     printf("args:  %s\n", j.args);
+            //     printf("run: %d\n", j.run_status);
+            // }
+
+            int output_size = 0;
+            for (int i = 0; i < sizeof(process_output); i++)
+            {
+                if (process_output[i] == '\0')
+                {
+                    output_size = i;
+                    break;
+                }
+            }
+            if (send(client_info->psd, process_output, output_size, 0) <0 )
+            // perror("sending stream message");
+            rc = 0;
+        }
+        else {
+            // printf("TCP/Client: %s:%d\n", inet_ntoa(client_info->from.sin_addr),
+            // ntohs(client_info->from.sin_port));
+            // printf("(Name is : %s)\n", hp->h_name);
+            // printf("Disconnected..\n");
+            close (client_info->psd);
+            exit(0);
+        }
+        cleanup(process_output);
+    }
+}
+
+void cleanup(char *buf)
+{
+    int i;
+    for(i=0; i<BUFSIZE; i++) buf[i]='\0';
+}
+void reusePort(int s)
+{
+    int one=1;
+    
+    if ( setsockopt(s,SOL_SOCKET,SO_REUSEADDR,(char *) &one,sizeof(one)) == -1 )
+	{
+	    printf("error in setsockopt,SO_REUSEPORT \n");
+	    exit(-1);
+	}
+}
+#pragma endregion
+
+#pragma region HANDLE THREAD
+
+#pragma region GLOBAL VARIABLES
+struct job
+{
+    int pid;
+    int run_status; // 1 is running, 0 is stopped // 2 is done
+    int job_order;
+    int is_background; 
+    char args[2000];
+};
+int pid_ch1, pid_ch2, ppid, job_num, status;
+struct job job_array[20];
+char *inString;
+#pragma endregion
+
+#pragma region FUNCTION DECLARATIONS
+void setjobAsBackground(int pid);
+void removeJobFromLog(int rem_index);
+static void sig_ignore(int signo);
+static void sig_int(int signo);
+static void sig_tstp(int signo);
+static void sig_int(int signo);
+int addJobToLog(int is_background);
+void executeChildProcess(char** args, int argc, int input_index, int output_index, int error_index, int background_index);
+void processSingleCommand(char** args, int argc, int input_index, int output_index, int error_index, int background_index, char* output_content); 
+void processPipeCommand(char** init_args, int argc, int pipe_index, int background_index, char * output_content);
+int getMostRecentBackground(int is_background);
+void processForegroundCommand(char * output_content);
+void processBackgroundCommand(char * output_content);
+void processJobsCommand(char * output_content);
+void printJob(int index, int is_bg, char * output_content);
+void findAndPrintCompletedJobs(char * output_content);
+void processStarter(char * inString, char * process_output);
+void initializeJobs();
+// void copy_arrays(struct job main_arr[], struct job to_copy_arr[]);
+#pragma endregion
 
 #pragma region SIGNAL HANDLING
 static void sig_ignore(int signo) 
@@ -104,7 +332,7 @@ int addJobToLog(int is_background)
     new_job.pid = pid_ch1;
     new_job.run_status = 1;
     new_job.job_order = ++job_num;
-    printf("process_num: %d\n", pid_ch1);
+    // printf("process_num: %d\n", pid_ch1);
     new_job.is_background = is_background;
     strcpy(new_job.args, inString);
     for (int i = 0; i < MAX_JOBS; i++) 
@@ -585,11 +813,7 @@ void processForegroundCommand(char * output_content)
 {
     int max_index = getMostRecentBackground(1);
 
-    // printf("max_index: %d\n", max_index);
-
     int max_pid = job_array[max_index].pid;
-    // printf("max_pid: %d\n", max_pid);
-
     setpgid(max_pid, max_pid);
     int count = 0;
     int first_stop = 0;
@@ -623,14 +847,15 @@ void processForegroundCommand(char * output_content)
         else if (WIFSTOPPED(status)) {
             if (first_stop == 0) {
                 pid_ch1 = max_pid;
-                strcat(output_content, job_array[max_index].args);
+                for (int i = 0; i < sizeof(job_array[max_index].args); i++)
+                {
+                    output_content[i] = job_array[max_index].args[i];
+                }
                 kill(max_pid, SIGCONT);
                 job_array[max_index].run_status = 1;
                 first_stop++;
             }
             count++;
-
-            // printf("Found stopped job\n");
         } else if (WIFCONTINUED(status)) {
             //printf("Continuing %d\n",ppid);
         }
@@ -752,30 +977,29 @@ void findAndPrintCompletedJobs(char * output_content)
 }
 #pragma endregion
 
-void initializeJobs(struct job client_jobs[])
+void initializeJobs()
 {
     for (int i = 0; i < MAX_JOBS; i++) 
     {
         removeJobFromLog(i);
     }
     job_num = 0;
-    copy_arrays(job_array, client_jobs);
 }
 
-void copy_arrays(struct job main_arr[], struct job to_copy_arr[])
-{
-    for (int i = 0; i < MAX_JOBS; i++)
-    {
-        to_copy_arr[i] = main_arr[i];
-    }
-}
+// void copy_arrays(struct job main_arr[], struct job to_copy_arr[])
+// {
+//     for (int i = 0; i < MAX_JOBS; i++)
+//     {
+//         to_copy_arr[i] = main_arr[i];
+//     }
+// }
 
-void processStarter(char * client_inString, struct job client_jobs[], char * process_output)
+void processStarter(char * client_inString, char * process_output)
 {
     inString = client_inString;
     // printf("got the following to execute: %s\n", inString);
     
-    copy_arrays(client_jobs, job_array);
+    // copy_arrays(client_jobs, job_array);
 
     // printf("======================================================\n");
     // printf("=====================INSIDE PROCESS===================\n");
@@ -784,7 +1008,7 @@ void processStarter(char * client_inString, struct job client_jobs[], char * pro
     //     for (int i = 0; i < 20; i++) 
     // {
     //     printf("Process-------------------\n");
-    //     struct job j = job_array[i];
+    //     struct job j = client_jobs[i];
     //     printf("order: %d\n", j.job_order);
     //     printf("args:  %s\n", j.args);
     //     printf("run: %d\n", j.run_status);
@@ -911,7 +1135,7 @@ void processStarter(char * client_inString, struct job client_jobs[], char * pro
     // if (signal(SIGTSTP, sig_ignore) == SIG_ERR)
     //     printf("signal(SIGTSTP) error");
     findAndPrintCompletedJobs(process_output);
-    copy_arrays(job_array, client_jobs);
+    // copy_arrays(job_array, client_jobs);
 
     // printf("======================================================\n");
     // printf("=====================COMPLETED PROCESS===================\n");
@@ -920,15 +1144,16 @@ void processStarter(char * client_inString, struct job client_jobs[], char * pro
     // for (int i = 0; i < 20; i++) 
     // {
     //     printf("Process-------------------\n");
-    //     struct job j = job_array[i];
-    //     printf("order: %d\n", j.job_order);
-    //     printf("args:  %s\n", j.args);
-    //     printf("run: %d\n", j.run_status);
+    //     // struct job j = client_jobs[i];
+    //     // printf("order: %d\n", j.job_order);
+    //     // printf("args:  %s\n", j.args);
+    //     // printf("run: %d\n", j.run_status);
     //     printf("Client--------------------\n");
-    //     struct job j2 = client_jobs[i];
+    //     struct job j2 = job_array[i];
     //     printf("order: %d\n", j2.job_order);
     //     printf("args:  %s\n", j2.args);
     //     printf("run: %d\n", j2.run_status);
     // }
     
 }
+#pragma endregion

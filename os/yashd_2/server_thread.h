@@ -8,15 +8,6 @@ struct job
     int is_background; 
     char args[2000];
 };
-
-typedef struct _job_thread_data
-{
-    int pid_ch1;
-    char * inString;
-    struct job job_array[20];
-    char process_output[2000];
-} job_thread_data;
-
 int pid_ch1, pid_ch2, ppid, job_num, status;
 struct job job_array[20];
 char *inString;

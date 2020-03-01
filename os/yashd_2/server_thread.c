@@ -104,7 +104,7 @@ int addJobToLog(int is_background)
     new_job.pid = pid_ch1;
     new_job.run_status = 1;
     new_job.job_order = ++job_num;
-    printf("process_num: %d\n", pid_ch1);
+    // printf("process_num: %d\n", pid_ch1);
     new_job.is_background = is_background;
     strcpy(new_job.args, inString);
     for (int i = 0; i < MAX_JOBS; i++) 
@@ -585,11 +585,7 @@ void processForegroundCommand(char * output_content)
 {
     int max_index = getMostRecentBackground(1);
 
-    // printf("max_index: %d\n", max_index);
-
     int max_pid = job_array[max_index].pid;
-    // printf("max_pid: %d\n", max_pid);
-
     setpgid(max_pid, max_pid);
     int count = 0;
     int first_stop = 0;
@@ -623,14 +619,15 @@ void processForegroundCommand(char * output_content)
         else if (WIFSTOPPED(status)) {
             if (first_stop == 0) {
                 pid_ch1 = max_pid;
-                strcat(output_content, job_array[max_index].args);
+                for (int i = 0; i < sizeof(job_array[max_index].args); i++)
+                {
+                    output_content[i] = job_array[max_index].args[i];
+                }
                 kill(max_pid, SIGCONT);
                 job_array[max_index].run_status = 1;
                 first_stop++;
             }
             count++;
-
-            // printf("Found stopped job\n");
         } else if (WIFCONTINUED(status)) {
             //printf("Continuing %d\n",ppid);
         }
@@ -777,23 +774,23 @@ void processStarter(char * client_inString, struct job client_jobs[], char * pro
     
     copy_arrays(client_jobs, job_array);
 
-    // printf("======================================================\n");
-    // printf("=====================INSIDE PROCESS===================\n");
-    // printf("======================================================\n");
+    printf("======================================================\n");
+    printf("=====================INSIDE PROCESS===================\n");
+    printf("======================================================\n");
 
-    //     for (int i = 0; i < 20; i++) 
-    // {
-    //     printf("Process-------------------\n");
-    //     struct job j = job_array[i];
-    //     printf("order: %d\n", j.job_order);
-    //     printf("args:  %s\n", j.args);
-    //     printf("run: %d\n", j.run_status);
-    //     printf("Client--------------------\n");
-    //     struct job j2 = client_jobs[i];
-    //     printf("order: %d\n", j2.job_order);
-    //     printf("args:  %s\n", j2.args);
-    //     printf("run: %d\n", j2.run_status);
-    // }
+        for (int i = 0; i < 20; i++) 
+    {
+        printf("Process-------------------\n");
+        struct job j = client_jobs[i];
+        printf("order: %d\n", j.job_order);
+        printf("args:  %s\n", j.args);
+        printf("run: %d\n", j.run_status);
+        printf("Client--------------------\n");
+        struct job j2 = client_jobs[i];
+        printf("order: %d\n", j2.job_order);
+        printf("args:  %s\n", j2.args);
+        printf("run: %d\n", j2.run_status);
+    }
     // printf("arrays copied\n");
     // if (signal(SIGINT, SIG_DFL) == SIG_ERR)
     //     printf("signal(SIGINT) error");
@@ -913,22 +910,22 @@ void processStarter(char * client_inString, struct job client_jobs[], char * pro
     findAndPrintCompletedJobs(process_output);
     copy_arrays(job_array, client_jobs);
 
-    // printf("======================================================\n");
-    // printf("=====================COMPLETED PROCESS===================\n");
-    // printf("======================================================\n");
+    printf("======================================================\n");
+    printf("=====================COMPLETED PROCESS===================\n");
+    printf("======================================================\n");
 
-    // for (int i = 0; i < 20; i++) 
-    // {
-    //     printf("Process-------------------\n");
-    //     struct job j = job_array[i];
-    //     printf("order: %d\n", j.job_order);
-    //     printf("args:  %s\n", j.args);
-    //     printf("run: %d\n", j.run_status);
-    //     printf("Client--------------------\n");
-    //     struct job j2 = client_jobs[i];
-    //     printf("order: %d\n", j2.job_order);
-    //     printf("args:  %s\n", j2.args);
-    //     printf("run: %d\n", j2.run_status);
-    // }
+    for (int i = 0; i < 20; i++) 
+    {
+        printf("Process-------------------\n");
+        struct job j = client_jobs[i];
+        printf("order: %d\n", j.job_order);
+        printf("args:  %s\n", j.args);
+        printf("run: %d\n", j.run_status);
+        printf("Client--------------------\n");
+        struct job j2 = client_jobs[i];
+        printf("order: %d\n", j2.job_order);
+        printf("args:  %s\n", j2.args);
+        printf("run: %d\n", j2.run_status);
+    }
     
 }
