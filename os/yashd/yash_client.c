@@ -10,6 +10,7 @@
 #include <unistd.h> /* close() */
 #include <stdlib.h> /* exit() */
 #include <signal.h>
+#include <readline/readline.h>
 
 #define MAXHOSTNAME 80
 #define BUFSIZE 2000
@@ -19,12 +20,47 @@ char rbuf[BUFSIZE];
 void GetUserInput();
 void cleanup(char *buf);
 
-
 int rc, cc;
 int   sd;
+int childpid;
+char mod_buf[2000] = {0};
+char * inString;
+
+static void sig_ignore(int signo) 
+{
+}
+
+static void sig_int(int signo) 
+{
+    if (send(sd, "CTL C", sizeof("CTL C"), 0) <0 )
+            perror("sending stream message");
+    // printf("sent CTL C\n");
+    // printf("in buffer: -----------------------\n%s\n------------------------", buf);
+    
+    // fflush(stdin);
+    // fflush(stdout);
+    // cleanup(mod_buf);
+    // cleanup(buf);
+
+    // int pid = fork();
+    // if (pid == 0) {
+	    
+    //     char *args[]={"clear",NULL}; 
+    //     execvp(args[0],args); 
+    // }
+    
+}
+static void sig_tstp(int signo) 
+{
+    if (send(sd, "CTL Z", sizeof("CTL Z"), 0) <0 )
+            perror("sending stream message");
+    // printf("sent CTL Z\n");
+    //printf("buf: %s\n", buf);
+    cleanup(mod_buf);
+    cleanup(buf);
+}
 
 int main(int argc, char **argv ) {
-    int childpid;
     struct sockaddr_in server;
     struct sockaddr_in client;
     struct hostent *hp, *gethostbyname();
@@ -34,19 +70,19 @@ int main(int argc, char **argv ) {
     int length;
     char ThisHost[80];
     
-    
+    #pragma region CONNECT
     /* get TCPClient Host information, NAME and INET ADDRESS */
     
     gethostname(ThisHost, MAXHOSTNAME);
     /* OR strcpy(ThisHost,"localhost"); */
     
-    printf("----TCP/Client running at host NAME: %s\n", ThisHost);
+    // printf("----TCP/Client running at host NAME: %s\n", ThisHost);
     if  ( (hp = gethostbyname(ThisHost)) == NULL ) {
 	fprintf(stderr, "Can't find host %s\n", argv[1]);
 	exit(-1);
     }
     bcopy ( hp->h_addr, &(server.sin_addr), hp->h_length);
-    printf("    (TCP/Client INET ADDRESS is: %s )\n", inet_ntoa(server.sin_addr));
+    // printf("    (TCP/Client INET ADDRESS is: %s )\n", inet_ntoa(server.sin_addr));
     
     /** get TCPServer-ex2 Host information, NAME and INET ADDRESS */
     
@@ -58,9 +94,9 @@ int main(int argc, char **argv ) {
 	    exit(-1);
 	}
     }
-    printf("----TCP/Server running at host NAME: %s\n", hp->h_name);
+    // printf("----TCP/Server running at host NAME: %s\n", hp->h_name);
     bcopy ( hp->h_addr, &(server.sin_addr), hp->h_length);
-    printf("    (TCP/Server INET ADDRESS is: %s )\n", inet_ntoa(server.sin_addr));
+    // printf("    (TCP/Server INET ADDRESS is: %s )\n", inet_ntoa(server.sin_addr));
     
     /* Construct name of socket to send to. */
     server.sin_family = AF_INET; 
@@ -89,14 +125,16 @@ int main(int argc, char **argv ) {
 	perror("could't get peername\n");
 	exit(1);
     }
-    printf("Connected to TCPServer1: ");
+    #pragma endregion
+    
+    // printf("Connected to TCPServer1: ");
     printf("%s:%d\n", inet_ntoa(from.sin_addr),
 	   ntohs(from.sin_port));
     if ((hp = gethostbyaddr((char *) &from.sin_addr.s_addr,
 			    sizeof(from.sin_addr.s_addr),AF_INET)) == NULL)
 	fprintf(stderr, "Can't find host %s\n", inet_ntoa(from.sin_addr));
     else
-	printf("(Name is : %s)\n", hp->h_name);
+	// printf("(Name is : %s)\n", hp->h_name);
 
     
     // if( (rc=recv(sd, rbuf, sizeof(buf), 0)) < 0){
@@ -112,6 +150,11 @@ int main(int argc, char **argv ) {
 	//         exit(0);
 	//     }
 
+    if (signal(SIGINT, sig_int) == SIG_ERR)
+        printf("signal(SIGINT) error");
+    if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
+        printf("signal(SIGTSTP) error");
+        
     childpid = fork();
     if (childpid == 0) {
 	    GetUserInput();
@@ -121,6 +164,7 @@ int main(int argc, char **argv ) {
       receive it from SERVER, display it back to USER  */
     for(;;) 
     {
+
         fflush(stdout);
         cleanup(rbuf);
         if( (rc=recv(sd, rbuf, sizeof(buf), 0)) < 0){
@@ -132,8 +176,9 @@ int main(int argc, char **argv ) {
             // printf("rc is : %d\n", rc);
             printf("%s", rbuf);
             rc = 0;
-	    }else {
-	        printf("Disconnected..\n");
+            fflush(stdout);
+            //send(sd, "", 0, 0);
+	    } else {
 	        close (sd);
 	        exit(0);
 	    }
@@ -149,15 +194,41 @@ void cleanup(char *buf)
 
 void GetUserInput()
 {
-    for(;;) {
-	// printf("\n");
-	cleanup(buf);
-	rc=read(0,buf, sizeof(buf));
-	if (rc == 0) break;
-	if (send(sd, buf, rc, 0) <0 )
-	    perror("sending stream message");
+     while(inString = readline(""))
+     {
+    // for (;;)
+    // {
+        // printf("\n");
+        // printf("%d\n", 1);
+        cleanup(buf);
+        cleanup(mod_buf);
+
+        // rc=read(0,buf, sizeof(buf));
+        for (int i = 0; i < BUFSIZE; i++)
+        {
+            if (inString[i] == '\0')
+            {
+                rc = i + 1;
+                break;
+            }
+        }
+        // printf("rc: %d\n", rc);
+
+        // printf("%d\n", 2);
+
+
+        strcat(mod_buf, "CMD ");
+        // strcat(mod_buf, buf);
+        strcat(mod_buf, inString);
+
+        // printf("Sending: %s\n", mod_buf);
+
+        if (send(sd, mod_buf, rc + 4, 0) <0 )
+            perror("sending stream message");
+        
+        cleanup(mod_buf);
+        inString = "";
     }
-    printf ("EOF... exit\n");
     close(sd);
     kill(getppid(), 9);
     exit (0);

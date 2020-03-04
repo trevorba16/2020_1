@@ -267,11 +267,14 @@ main(int argc, char *argv[])
       
       if ( ( connfd = connected_socket(listenfd) ) < 0 ) continue;
     
-      if ( ( childpid = fork() ) == 0) {        /* child process */
-          close(listenfd);      /* close listening socket */
-	  chr_echo(connfd); /* process the request */
-	  exit(0);          /* terminate child */
-      } else if (childpid < 0) {
+      if ( ( childpid = fork() ) == 0) 
+      {        /* child process */
+        close(listenfd);      /* close listening socket */
+	      chr_echo(connfd); /* process the request */
+	      exit(0);          /* terminate child */
+      } 
+      else if (childpid < 0) 
+      {
           perror("Fork");
           exit(1);
       }

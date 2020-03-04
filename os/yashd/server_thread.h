@@ -9,14 +9,6 @@ struct job
     char args[2000];
 };
 
-typedef struct _job_thread_data
-{
-    int pid_ch1;
-    char * inString;
-    struct job job_array[20];
-    char process_output[2000];
-} job_thread_data;
-
 int pid_ch1, pid_ch2, ppid, job_num, status;
 struct job job_array[20];
 char *inString;
@@ -31,15 +23,15 @@ static void sig_tstp(int signo);
 static void sig_int(int signo);
 int addJobToLog(int is_background);
 void executeChildProcess(char** args, int argc, int input_index, int output_index, int error_index, int background_index);
-void processSingleCommand(char** args, int argc, int input_index, int output_index, int error_index, int background_index, char* output_content); 
-void processPipeCommand(char** init_args, int argc, int pipe_index, int background_index, char * output_content);
+void processSingleCommand(char** args, int argc, int input_index, int output_index, int error_index, int background_index, char* output_content, int *running_pid); 
+void processPipeCommand(char** init_args, int argc, int pipe_index, int background_index, char * output_content, int *running_pid);
 int getMostRecentBackground(int is_background);
-void processForegroundCommand(char * output_content);
+void processForegroundCommand(char * output_content, int *running_pid);
 void processBackgroundCommand(char * output_content);
 void processJobsCommand(char * output_content);
 void printJob(int index, int is_bg, char * output_content);
 void findAndPrintCompletedJobs(char * output_content);
-void processStarter(char * inString, struct  job job_array[], char * process_output);
+void processStarter(char * inString, struct  job job_array[], char * process_output, int *running_pid);
 void initializeJobs(struct  job job_array[]);
 void copy_arrays(struct job main_arr[], struct job to_copy_arr[]);
 #pragma endregion

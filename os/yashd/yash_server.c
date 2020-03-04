@@ -21,6 +21,7 @@ DESCRIPTION:
 #include <sys/socket.h> /* sockaddr_in */
 #include <netinet/in.h> /* inet_addr() */
 #include <arpa/inet.h>
+#include <sys/un.h>
 #include <netdb.h> /* struct hostent */
 #include <string.h> /* memset() */
 #include <unistd.h> /* close() */
@@ -31,34 +32,85 @@ DESCRIPTION:
 #include <sys/types.h>
 #include <sys/wait.h>
 #include "server_thread.h"
-
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <sys/file.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/un.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <signal.h>
+#include <errno.h>
+#include <ctype.h>
 
 #define MAXHOSTNAME 80
 #define NUM_THREADS 20
 #define BUFSIZE 2000
+#define PATHMAX 255
 
-
+#pragma region STRUCTS
 struct client_state
 {
     int in_use;
+    int running_pid;
+    int * pid_point;
     struct job job_array[20];
 };
+typedef struct _client_thread_data
+{
+    int psd;
+    int state_array_idx;
+    struct sockaddr_in from;
+    char * inString;
+} client_thread_data;
+
+typedef struct _job_thread_data
+{
+    int state_array_idx;
+    int psd;
+} job_thread_data;
+
+typedef struct _recv_thread_data
+{
+    int psd;
+    int state_array_idx;
+    struct sockaddr_in from;
+} recv_thread_data;
+#pragma endregion
+
+#pragma region GLOBAL VARIABLES
+struct client_state client_array[NUM_THREADS];
+pthread_t client_thr[NUM_THREADS];
+client_thread_data client_thr_data[NUM_THREADS];
+pthread_mutex_t client_array_lock = PTHREAD_MUTEX_INITIALIZER;
+recv_thread_data rtd[NUM_THREADS];
+job_thread_data jtd[NUM_THREADS];
+
+static char u_server_path[PATHMAX+1] = "/tmp";  /* default */
+static char u_socket_path[PATHMAX+1];
+static char u_log_path[PATHMAX+1];
+static char u_pid_path[PATHMAX+1];
+#pragma endregion
 
 #pragma region FUNCTION DECLARATIONS
 int current_thread;
 void reusePort(int sock);
 void * ServeClient(void * arg);
 void cleanup(char *buf);
+void * StartJobsFromInput(void * arg);
+void * ReceiveUserInput(void * arg);
+int getOpenClientIndex();
+void initializeClientArray();
+int getLastProcess(int client_array_idx);
+void daemon_init(const char * const path, uint mask);
 #pragma endregion
-
-struct client_state client_array[NUM_THREADS];
-
-typedef struct _client_thread_data
-{
-    int psd;
-    int state_array_idx;
-    struct sockaddr_in from;
-} client_thread_data;
 
 #pragma region INITIALIZATION AND MEMORY
 void initializeClientArray()
@@ -86,15 +138,6 @@ void reusePort(int s)
 }
 #pragma endregion
 
-int getOpenClientIndex()
-{
-    for (int i = 0; i < NUM_THREADS; i++)
-    {
-        if (client_array[i].in_use = 0)
-            return i;
-    }
-}
-
 int main(int argc, char **argv ) {
     int   sd, psd;
     struct   sockaddr_in server;
@@ -104,22 +147,40 @@ int main(int argc, char **argv ) {
     int length;
     char ThisHost[80];
     int pn;
-    pthread_t thr[NUM_THREADS];
-    client_thread_data thr_data[NUM_THREADS];
 
     current_thread = 0;
+
+    #pragma region DAEMONIZE
+    int  listenfd;
+  
+  /* Initialize path variables */
+    if (argc > 1) 
+        strncpy(u_server_path, argv[1], PATHMAX); /* use argv[1] */
+    strncat(u_server_path, "/", PATHMAX-strlen(u_server_path));
+    strncat(u_server_path, argv[0], PATHMAX-strlen(u_server_path));
+    strcpy(u_socket_path, u_server_path);
+    strcpy(u_pid_path, u_server_path);
+    strncat(u_pid_path, ".pid", PATHMAX-strlen(u_pid_path));
+    strcpy(u_log_path, u_server_path);
+    strncat(u_log_path, ".log", PATHMAX-strlen(u_log_path));
     
+    daemon_init(u_server_path, 0); /* We stay in the u_server_path directory and file
+                                        creation is not restricted. */
+
+    #pragma endregion
+    
+    #pragma region CONNECTION
     /* get TCPServer1 Host information, NAME and INET ADDRESS */
     gethostname(ThisHost, MAXHOSTNAME);
     /* OR strcpy(ThisHost,"localhost"); */
     
-    printf("----TCP/Server running at host NAME: %s\n", ThisHost);
+    // printf("----TCP/Server running at host NAME: %s\n", ThisHost);
     if  ( (hp = gethostbyname(ThisHost)) == NULL ) {
       fprintf(stderr, "Can't find host %s\n", argv[1]);
       exit(-1);
     }
     bcopy ( hp->h_addr, &(server.sin_addr), hp->h_length);
-    printf("    (TCP/Server INET ADDRESS is: %s )\n", inet_ntoa(server.sin_addr));
+    // printf("    (TCP/Server INET ADDRESS is: %s )\n", inet_ntoa(server.sin_addr));
 
     
     
@@ -158,21 +219,30 @@ int main(int argc, char **argv ) {
         perror("getting socket name");
         exit(0);
     }
-    printf("Server Port is: %d\n", ntohs(server.sin_port));
-    
+    // printf("Server Port is: %d\n", ntohs(server.sin_port));
+    #pragma endregion
     /** accept TCP connections from clients and fork a process to serve each */
     listen(sd,4);
     fromlen = sizeof(from);
-    for(;;){
+    for(;;)
+    {
         current_thread = getOpenClientIndex();
         psd  = accept(sd, (struct sockaddr *)&from, &fromlen);
-        thr_data[current_thread].from = from;
-        thr_data[current_thread].psd = psd;
-        thr_data[current_thread].state_array_idx = current_thread;
-        pthread_create(&thr[current_thread], NULL, ServeClient, &thr_data[current_thread]);
+        client_thr_data[current_thread].from = from;
+        client_thr_data[current_thread].psd = psd;
+        client_thr_data[current_thread].state_array_idx = current_thread;
+        pthread_create(&client_thr[current_thread], NULL, ServeClient, &client_thr_data[current_thread]);
 	}
 }
 
+int getOpenClientIndex()
+{
+    for (int i = 0; i < NUM_THREADS; i++)
+    {
+        if (client_array[i].in_use = 0)
+            return i;
+    }
+}
 static void sig_child(int signo)
 {
     pid_t pid;
@@ -196,21 +266,23 @@ static void sig_child(int signo)
     }
 }
 
+#pragma region CLIENT HANDLING
 void * ServeClient(void * arg) {
     client_thread_data *client_info = (client_thread_data *) arg;
-    char buf[BUFSIZE];
-    int rc;
-    struct  hostent *hp, *gethostbyname();
-    char process_output[BUFSIZE] = {0};
     pthread_t job_thread;
     pthread_t recv_thread;
+    
+    struct  hostent *hp, *gethostbyname();
+    char inString[2000] = {0};
+
+    client_thr_data[client_info->state_array_idx].inString = inString;
+    client_array[client_info->state_array_idx].running_pid = -1;
+    client_array[client_info->state_array_idx].pid_point = &client_array[client_info->state_array_idx].running_pid;
 
     if (signal(SIGCHLD, sig_child) == SIG_ERR)
         printf("signal(SIGCHLD) error");
 
     initializeJobs(client_array[client_info->state_array_idx].job_array);
-
-
 
     // printf("Serving %s:%d\n", inet_ntoa(client_info->from.sin_addr), ntohs(client_info->from.sin_port));
     if ((hp = gethostbyaddr((char *)&client_info->from.sin_addr.s_addr,
@@ -222,29 +294,71 @@ void * ServeClient(void * arg) {
     {
 	    // printf("(Name is : %s)\n", hp->h_name);
     }
+
+
+    char * hash = "# ";
+    // printf("%d\n", 32);
+    if (send(client_info->psd, hash, 2, 0) <0 )
+        perror("Couldn't send initial prompt");
+
+    struct sockaddr_in from = client_info->from;
+    int psd = client_info->psd;
+    int array_idx = client_info->state_array_idx;
+
     /**  get data from  client and send it back */
+    // printf("%d\n", 10);
+    jtd[array_idx].state_array_idx = array_idx;
+    jtd[array_idx].psd = psd;
+    // printf("%d\n", 12);
+    pthread_create(&job_thread, NULL, StartJobsFromInput, &jtd[array_idx]);
+    // printf("%d\n", 13);
 
-    phthread_create(&job_thread, NULL, , NULL);
 
-    for(;;){
-        char * hash = "# ";
+    rtd[array_idx].from = from;
+    rtd[array_idx].state_array_idx = array_idx;
+    rtd[array_idx].psd = psd;
+    // printf("psd: %d\n", client_info->psd);
+    // printf("psd: %d\n", rtd[array_idx].psd);
+    // printf("%d\n", 14);
+    pthread_create(&recv_thread, NULL, ReceiveUserInput, &rtd[array_idx]);
+    // printf("%d\n", 15);
+}
+#pragma endregion
 
-        if (send(client_info->psd, hash, 2, 0) <0 )
-            perror("Couldn't send initial prompt");
+#pragma region START PROCESS
+void * StartJobsFromInput(void * arg)
+{
+    // printf("%d\n", 20);
+    job_thread_data *thread_info = (job_thread_data *) arg;
+    // printf("%d\n", thread_info->pid_ch1);
+    int array_idx = thread_info->state_array_idx;
+    char process_output[BUFSIZE] = {0};
 
-        // printf("\n...server is waiting...\n");
-        if( (rc=recv(client_info->psd, buf, sizeof(buf), 0)) < 0){
-            perror("receiving stream  message");
-            exit(-1);
+    // printf("%d\n", 201);
+    for (;;)
+    {
+        pthread_mutex_lock(&client_array_lock);
+        char c = client_thr_data[array_idx].inString[0];
+        pthread_mutex_unlock(&client_array_lock);
+        if (c == '\0')
+        {
+            // printf("%d\n", 21);
         }
-        if (rc > 0){
-            buf[rc - 1]='\0';
-            char * inString = buf;
+        else 
+        {
+            // printf("%d\n", 22);
+            // printf("got something in inString: %s\n", client_thr_data[array_idx].inString);
 
-            processStarter(inString, client_array[client_info->state_array_idx].job_array, process_output);
-            // processStarter(inString, client_array[client_info->state_array_idx].job_array, process_output);
+            processStarter(client_thr_data[array_idx].inString, client_array[thread_info->state_array_idx].job_array, process_output, client_array[array_idx].pid_point);
 
+            // printf("finished process\n");
+            pthread_mutex_lock(&client_array_lock);
+            cleanup(client_thr_data[array_idx].inString);
+            pthread_mutex_unlock(&client_array_lock);
+
+            // printf("%d\n", 23);
             int output_size = 0;
+            strcat(process_output, "\n# ");
             for (int i = 0; i < sizeof(process_output); i++)
             {
                 if (process_output[i] == '\0')
@@ -253,112 +367,301 @@ void * ServeClient(void * arg) {
                     break;
                 }
             }
-            if (send(client_info->psd, process_output, output_size, 0) <0 )
-            // perror("sending stream message");
-            rc = 0;
+            // printf("Sending back: %s\n", process_output);
+
+            if (send(thread_info->psd, process_output, output_size, 0) <0 )
+                perror("sending stream message");
+            
+            cleanup(process_output);
+            // printf("Sent\n");
+            
         }
-        else {
-            // printf("TCP/Client: %s:%d\n", inet_ntoa(client_info->from.sin_addr),
-            // ntohs(client_info->from.sin_port));
-            // printf("(Name is : %s)\n", hp->h_name);
-            // printf("Disconnected..\n");
-            close (client_info->psd);
-            client_array[client_info->state_array_idx].in_use = 0;
-            initializeJobs(client_array[client_info->state_array_idx].job_array);
-            exit(0);
-        }
-        cleanup(process_output);
     }
 }
+#pragma endregion
 
-void * ServeClient(void * arg) {
-    client_thread_data *client_info = (client_thread_data *) arg;
+#pragma region RECEIVE INPUT
+void * ReceiveUserInput(void * arg)
+{
+    // printf("%d\n", 30);
+    recv_thread_data * thread_info = (recv_thread_data *) arg;
+    // recv_thread_data thread_info = *thread_info0;
+    int array_idx = thread_info->state_array_idx;
+    // printf("%d\n", 31);
+    int rc = -1;
     char buf[BUFSIZE];
-    int rc;
+
+    int psd = thread_info->psd;
+    // printf("psd: %d\n", psd);
+
     struct  hostent *hp, *gethostbyname();
-    char process_output[BUFSIZE] = {0};
-    pthread_t job_thread;
-    pthread_t recv_thread;
-
-    if (signal(SIGCHLD, sig_child) == SIG_ERR)
-        printf("signal(SIGCHLD) error");
-
-    initializeJobs(client_array[client_info->state_array_idx].job_array);
-
-
-
-    // printf("Serving %s:%d\n", inet_ntoa(client_info->from.sin_addr), ntohs(client_info->from.sin_port));
-    if ((hp = gethostbyaddr((char *)&client_info->from.sin_addr.s_addr,
-			    sizeof(client_info->from.sin_addr.s_addr),AF_INET)) == NULL)
+    if ((hp = gethostbyaddr((char *)&thread_info->from.sin_addr.s_addr,
+			    sizeof(thread_info->from.sin_addr.s_addr),AF_INET)) == NULL)
 	{
-        fprintf(stderr, "Can't find host %s\n", inet_ntoa(client_info->from.sin_addr));
+        fprintf(stderr, "Can't find host %s\n", inet_ntoa(thread_info->from.sin_addr));
     }
     else
     {
 	    // printf("(Name is : %s)\n", hp->h_name);
     }
-    /**  get data from  client and send it back */
-
-    phthread_create(&job_thread, NULL, , NULL);
 
     for(;;){
-        char * hash = "# ";
-
-        if (send(client_info->psd, hash, 2, 0) <0 )
-            perror("Couldn't send initial prompt");
-
+        // printf("%d\n", 33);
         // printf("\n...server is waiting...\n");
-        if( (rc=recv(client_info->psd, buf, sizeof(buf), 0)) < 0){
+        if( (rc=recv(psd, buf, sizeof(buf), 0)) < 0){
             perror("receiving stream  message");
             exit(-1);
         }
         if (rc > 0){
-            buf[rc - 1]='\0';
-            char * inString = buf;
+            // printf("rc: %d\n", rc);
+            //printf("rc[3]: %s\n", buf[3]);
 
-            processStarter(inString, client_array[client_info->state_array_idx].job_array, process_output);
-            // processStarter(inString, client_array[client_info->state_array_idx].job_array, process_output);
-
-            int output_size = 0;
-            for (int i = 0; i < sizeof(process_output); i++)
+            // buf[rc - 1]='\0';
+            pthread_mutex_lock(&client_array_lock);
+            if (buf[4] == '\n')
             {
-                if (process_output[i] == '\0')
+                // printf("Got newline\n");
+                client_thr_data[array_idx].inString[0] = '\n';
+                client_thr_data[array_idx].inString[1] = '\0';
+            }
+            else if (buf[0] == 'C' && buf[1] == 'M' && buf[2] == 'D')
+            {
+                buf[rc - 1]='\0';
+
+                int c = 0;
+   
+                while (c < rc) {
+                    client_thr_data[array_idx].inString[c] = buf[4+c];
+                    c++;
+                }
+                client_thr_data[array_idx].inString[c] = '\0';
+                //client_thr_data[array_idx].inString = buf;
+            }
+            else if (buf[0] == 'C' && buf[1] == 'T' && buf[2] == 'L')
+            {
+                buf[rc - 1]='\0';
+
+                if (buf[4] == 'C') 
                 {
-                    output_size = i;
-                    break;
+                    // int kill_job_idx = getLastProcess(array_idx);
+
+                    // int kill_pid = client_array[array_idx].job_array[kill_job_idx].pid;
+
+                    // printf("Killing pid: %d\n", client_array[array_idx].running_pid);
+                    
+                    if (client_array[array_idx].running_pid != 0)
+                    {
+                        kill(client_array[array_idx].running_pid, SIGINT);
+
+                        client_array[array_idx].running_pid = 0;
+                        // printf("Running pid is now: %d\n", client_array[array_idx].running_pid);
+
+                        int kill_job_idx = -1;
+                        for (int i = 0; i < 20; i++)
+                        {
+                            if (client_array[array_idx].job_array[kill_job_idx].pid == client_array[array_idx].running_pid)
+                                kill_job_idx = i;
+                        }
+                        // printf("%d\n", 1);
+
+                        if (kill_job_idx != -1)
+                        {
+                            memset(job_array[kill_job_idx].args, 0, 2000);
+                            client_array[array_idx].job_array[kill_job_idx].job_order = -1;
+                            client_array[array_idx].job_array[kill_job_idx].pid = -1;
+                            client_array[array_idx].job_array[kill_job_idx].run_status = -1;
+                            client_array[array_idx].job_array[kill_job_idx].is_background = -1;
+                        }
+                        // printf("%d\n", 2);
+                    }
+                    else 
+                    {
+                        client_thr_data[array_idx].inString[0] = ' ';
+                    }
+                    client_thr_data[array_idx].inString[1] = '\0';
+                }
+                else if (buf[4] == 'Z') 
+                {
+                    // printf("Stopping pid: %d\n", client_array[array_idx].running_pid);
+
+                    if (client_array[array_idx].running_pid != 0)
+                    {
+                        kill(client_array[array_idx].running_pid, SIGTSTP);
+
+                        client_array[array_idx].running_pid = 0;
+                    }
+                    // if (client_array[array_idx].running_pid != 0)
+                    // kill(client_array[array_idx].running_pid, SIGTSTP);
+
+                    
+                    // int kill_job_idx = -1;
+                    // for (int i = 0; i < 20; i++)
+                    // {
+                    //     if (client_array[array_idx].job_array[kill_job_idx].pid == client_array[array_idx].running_pid)
+                    //         kill_job_idx = i;
+                    // }
+
+                    // printf("Kill job index: %d", kill_job_idx);
+
+                    // if (kill_job_idx != -1)
+                    // {
+                    //     client_array[array_idx].job_array[kill_job_idx].run_status = 0;
+                        
+                    // }
+
                 }
             }
-            if (send(client_info->psd, process_output, output_size, 0) <0 )
-            // perror("sending stream message");
+            pthread_mutex_unlock(&client_array_lock);
             rc = 0;
+            cleanup(buf);
+            // printf("%d\n", 35);
         }
         else {
+            // printf("%d\n", 36);
             // printf("TCP/Client: %s:%d\n", inet_ntoa(client_info->from.sin_addr),
             // ntohs(client_info->from.sin_port));
             // printf("(Name is : %s)\n", hp->h_name);
-            // printf("Disconnected..\n");
-            close (client_info->psd);
-            client_array[client_info->state_array_idx].in_use = 0;
-            initializeJobs(client_array[client_info->state_array_idx].job_array);
-            exit(0);
+            // // printf("Disconnected..\n");
+            // close (client_info->psd);
+            // client_array[client_info->state_array_idx].in_use = 0;
+            // initializeJobs(client_array[client_info->state_array_idx].job_array);
+            // exit(0);
         }
-        cleanup(process_output);
     }
 }
-
-void * StartJobsFromInput()
+int getLastProcess(int client_array_idx)
 {
-    for (;;)
-    {
+    // printf("Starting getMostRecentBackground()\n");
+    int max_process = -1;
+    int max_job_order = -1;
+    int max_index = -1;
 
-        processStarter(inString, client_array[client_info->state_array_idx].job_array, process_output);
+    
+    for (int i = 0; i < 20; i++)
+     {
+        if (client_array[client_array_idx].job_array[i].job_order != -1 
+            && client_array[client_array_idx].job_array[i].pid != -1 
+            && client_array[client_array_idx].job_array[i].run_status != -1) 
+        {
+            struct job j = client_array[client_array_idx].job_array[i];
+            // printf("Made job\n");
+            // printf("run_status: %d\n", j.run_status);
+            // printf("jobOrder: %d\n", j.job_order);
+            // printf("pid: %d\n", j.pid);
+            if (j.job_order > max_job_order && j.run_status == 1)
+            {
+                max_job_order = j.job_order;
+                max_index = i;
+            }
+        }
     }
+    return max_index;
 }
+#pragma endregion
 
-void * ReceiveUserInput()
+#pragma region DAEMON INIT
+/**
+ * @brief  If we are waiting reading from a pipe and
+ *  the interlocutor dies abruptly (say because
+ *  of ^C or kill -9), then we receive a SIGPIPE
+ *  signal. Here we handle that.
+ */
+void sig_pipe(int n) 
 {
-    for (;;)
-    {
-        
-    }
+   perror("Broken pipe signal");
 }
+
+
+/**
+ * @brief Handler for SIGCHLD signal 
+ */
+void sig_chld(int n)
+{
+  int status;
+
+  fprintf(stderr, "Child terminated\n");
+  wait(&status); /* So no zombies */
+}
+
+/**
+ * @brief Initializes the current program as a daemon, by changing working 
+ *  directory, umask, and eliminating control terminal,
+ *  setting signal handlers, saving pid, making sure that only
+ *  one daemon is running. Modified from R.Stevens.
+ * @param[in] path is where the daemon eventually operates
+ * @param[in] mask is the umask typically set to 0
+ */
+void daemon_init(const char * const path, uint mask)
+{
+  pid_t pid;
+  char buff[256];
+  static FILE *log; /* for the log */
+  int fd;
+  int k;
+
+  /* put server in background (with init as parent) */
+  if ( ( pid = fork() ) < 0 ) {
+    perror("daemon_init: cannot fork");
+    exit(0);
+  } else if (pid > 0) /* The parent */
+    exit(0);
+
+  /* the child */
+
+  /* Close all file descriptors that are open */
+  for (k = getdtablesize()-1; k>0; k--)
+      close(k);
+
+  /* Redirecting stdin and stdout to /dev/null */
+  if ( (fd = open("/dev/null", O_RDWR)) < 0) {
+    perror("Open");
+    exit(0);
+  }
+  dup2(fd, STDIN_FILENO);      /* detach stdin */
+  dup2(fd, STDOUT_FILENO);     /* detach stdout */
+  close (fd);
+  /* From this point on printf and scanf have no effect */
+
+  /* Redirecting stderr to u_log_path */
+  log = fopen(u_log_path, "aw"); /* attach stderr to u_log_path */
+  fd = fileno(log);  /* obtain file descriptor of the log */
+  dup2(fd, STDERR_FILENO);
+  close (fd);
+  /* From this point on printing to stderr will go to /tmp/u-echod.log */
+
+  /* Establish handlers for signals */
+  if ( signal(SIGCHLD, sig_chld) < 0 ) {
+    perror("Signal SIGCHLD");
+    exit(1);
+  }
+  if ( signal(SIGPIPE, sig_pipe) < 0 ) {
+    perror("Signal SIGPIPE");
+    exit(1);
+  }
+
+  /* Change directory to specified directory */
+  chdir(path); 
+
+  /* Set umask to mask (usually 0) */
+  umask(mask); 
+  
+  /* Detach controlling terminal by becoming sesion leader */
+  setsid();
+
+  /* Put self in a new process group */
+  pid = getpid();
+  setpgrp(); /* GPI: modified for linux */
+
+  /* Make sure only one server is running */
+  if ( ( k = open(u_pid_path, O_RDWR | O_CREAT, 0666) ) < 0 )
+    exit(1);
+  if ( lockf(k, F_TLOCK, 0) != 0)
+    exit(0);
+
+  /* Save server's pid without closing file (so lock remains)*/
+  sprintf(buff, "%6d", pid);
+  write(k, buff, strlen(buff));
+
+  return;
+}
+#pragma endregion

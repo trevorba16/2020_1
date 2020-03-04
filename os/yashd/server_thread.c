@@ -104,7 +104,7 @@ int addJobToLog(int is_background)
     new_job.pid = pid_ch1;
     new_job.run_status = 1;
     new_job.job_order = ++job_num;
-    printf("process_num: %d\n", pid_ch1);
+    // printf("process_num: %d\n", pid_ch1);
     new_job.is_background = is_background;
     strcpy(new_job.args, inString);
     for (int i = 0; i < MAX_JOBS; i++) 
@@ -229,7 +229,7 @@ void executeChildProcess(char** args, int argc, int input_index, int output_inde
     exit(0);
 }
 
-void processSingleCommand(char** args, int argc, int input_index, int output_index, int error_index, int background_index, char* output_content) 
+void processSingleCommand(char** args, int argc, int input_index, int output_index, int error_index, int background_index, char* output_content, int *running_pid) 
 {
 
     int filedes[2];
@@ -248,6 +248,8 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
         // Parent
         close(filedes[1]);
         int job_idx = addJobToLog(is_background);
+        *running_pid = pid_ch1;
+        // printf("pid is now %p\n", running_pid);
         if (background_index != -1) {
             kill(pid_ch1, SIGTSTP);
             kill(pid_ch1, SIGCONT);
@@ -268,7 +270,7 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
             while (count < 1) 
             {
                 // printf("%d\n", 3);
-                ppid = waitpid(pid_ch1, &status, WUNTRACED | WNOHANG);
+                ppid = waitpid(pid_ch1, &status, WUNTRACED);
                 // printf("waiting for %d\n", pid_ch1);
                 
                 if (ppid == -1) 
@@ -279,37 +281,44 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
 
                 if (WIFEXITED(status)) 
                 {
+                    // printf("Exited\n");
                     removeJobFromLog(job_idx);
                     //printf("child %d exited, status=%d\n", ppid, WEXITSTATUS(status));
                     count++;
+                    char buffer[BUFSIZE];
+                    while (1) 
+                    {
+                        ssize_t count = read(filedes[0], buffer, sizeof(buffer));
+                        // printf("Count from read: %zu\n", count);
+                        if (count == -1) {
+                            perror("waitpid");
+                            exit(EXIT_FAILURE);
+                        } else if (count == 0) {
+                            break;
+                        } else {
+                            // printf("Got this in parent: %s\n", buffer);
+                            for (int i = 0; i < count; i++)
+                            {
+                                output_content[i] = buffer[i];
+                            }
+                        }
+                    }
                 } 
                 else if (WIFSIGNALED(status)) 
                 {
-                    //printf("child %d killed by signal %d\n", ppid, WTERMSIG(status));
+                    // printf("Signaled\n");
+                    removeJobFromLog(job_idx);
+                    //printf("child %d exited, status=%d\n", ppid, WEXITSTATUS(status));
                     count++;
+                    // char buffer[BUFSIZE];
+                    // printf("Signaled\n");
                 } 
                 else if (WIFSTOPPED(status)) {
+                    // printf("Stopped\n");
+                    job_array[job_idx].run_status = 0;
                     count++;
+
                 } else if (WIFCONTINUED(status)) {
-                }
-            }
-            char buffer[BUFSIZE];
-            while (1) 
-            {
-                // printf("Looking for output\n");
-                ssize_t count = read(filedes[0], buffer, sizeof(buffer));
-                // printf("Count from read: %zu\n", count);
-                if (count == -1) {
-                    perror("waitpid");
-                    exit(EXIT_FAILURE);
-                } else if (count == 0) {
-                    break;
-                } else {
-                    // printf("Got this in parent: %s\n", buffer);
-                    for (int i = 0; i < count; i++)
-                    {
-                        output_content[i] = buffer[i];
-                    }
                 }
             }
         }
@@ -323,7 +332,7 @@ void processSingleCommand(char** args, int argc, int input_index, int output_ind
     }
 }
 
-void processPipeCommand(char** init_args, int argc, int pipe_index, int background_index, char * output_content) 
+void processPipeCommand(char** init_args, int argc, int pipe_index, int background_index, char * output_content, int *running_pid) 
 {
 
     char **args_left = malloc((argc) * sizeof(char *));
@@ -521,6 +530,7 @@ void processPipeCommand(char** init_args, int argc, int pipe_index, int backgrou
             }
 
             int job_idx = addJobToLog(is_background);
+            // running_pid = pid_ch1;
 
             if (background_index != -1) 
             {
@@ -543,6 +553,26 @@ void processPipeCommand(char** init_args, int argc, int pipe_index, int backgrou
                     if (WIFEXITED(status)) 
                     {
                         removeJobFromLog(job_idx);
+                        char buffer[BUFSIZE];
+                        while (1) 
+                        {
+                            // printf("Looking for output\n");
+                            ssize_t count = read(pipeRtoP[0], buffer, sizeof(buffer));
+                            // printf("Count from read: %zu\n", count);
+                            if (count == -1) {
+                                perror("waitpid");
+                                exit(EXIT_FAILURE);
+                            } else if (count == 0) {
+                                break;
+                            } else {
+                                // printf("Got this in parent: %s\n", buffer);
+                                for (int i = 0; i < count; i++)
+                                {
+                                    output_content[i] = buffer[i];
+                                }
+                            }
+                            // printf("output: %s\n", output_content);
+                        }
                         count++;
                     } 
                     else if (WIFSIGNALED(status)) 
@@ -554,26 +584,6 @@ void processPipeCommand(char** init_args, int argc, int pipe_index, int backgrou
                     } else if (WIFCONTINUED(status)) {
                     }
                 }
-                char buffer[BUFSIZE];
-                while (1) 
-                {
-                    // printf("Looking for output\n");
-                    ssize_t count = read(pipeRtoP[0], buffer, sizeof(buffer));
-                    // printf("Count from read: %zu\n", count);
-                    if (count == -1) {
-                        perror("waitpid");
-                        exit(EXIT_FAILURE);
-                    } else if (count == 0) {
-                        break;
-                    } else {
-                        // printf("Got this in parent: %s\n", buffer);
-                        for (int i = 0; i < count; i++)
-                        {
-                            output_content[i] = buffer[i];
-                        }
-                    }
-                    // printf("output: %s\n", output_content);
-                }
             }
         }
     }
@@ -581,7 +591,7 @@ void processPipeCommand(char** init_args, int argc, int pipe_index, int backgrou
 #pragma endregion
 
 #pragma region CUSTOM JOB COMMANDS
-void processForegroundCommand(char * output_content) 
+void processForegroundCommand(char * output_content, int *running_pid) 
 {
     int max_index = getMostRecentBackground(1);
 
@@ -625,6 +635,7 @@ void processForegroundCommand(char * output_content)
                 pid_ch1 = max_pid;
                 strcat(output_content, job_array[max_index].args);
                 kill(max_pid, SIGCONT);
+                // running_pid = pid_ch1;
                 job_array[max_index].run_status = 1;
                 first_stop++;
             }
@@ -770,13 +781,14 @@ void copy_arrays(struct job main_arr[], struct job to_copy_arr[])
     }
 }
 
-void processStarter(char * client_inString, struct job client_jobs[], char * process_output)
+void processStarter(char * client_inString, struct job client_jobs[], char * process_output, int * running_pid)
 {
+    // printf("%d\n", 500);
     inString = client_inString;
     // printf("got the following to execute: %s\n", inString);
     
     copy_arrays(client_jobs, job_array);
-
+    // printf("%d\n", 501);
     // printf("======================================================\n");
     // printf("=====================INSIDE PROCESS===================\n");
     // printf("======================================================\n");
@@ -802,7 +814,10 @@ void processStarter(char * client_inString, struct job client_jobs[], char * pro
 
     pid_ch1 = -1;
     pid_ch2 = -1;
+    // printf("%d\n", 502);
+    // printf("%s\n", inString);
     int input_length = strlen(inString);
+    // printf("%d\n", 503);
     int pipe_index = -1;
     int input_index = -1;
     int output_index = -1;
@@ -812,7 +827,7 @@ void processStarter(char * client_inString, struct job client_jobs[], char * pro
     char argv[100][50]; 
     int j,ctr;
     
-
+    // printf("%d\n", 50);
     #pragma region PARSE INSTRING
     j=0; ctr=0;
     for(int i=0;i<=(strlen(inString));i++) {
@@ -854,7 +869,7 @@ void processStarter(char * client_inString, struct job client_jobs[], char * pro
         }
     }
     #pragma endregion
-    
+    // printf("%d\n", 51);
     #pragma region CHECK FOR CUSTOM COMMANDS
     int foreground = 0;
     int background = 0;
@@ -880,11 +895,11 @@ void processStarter(char * client_inString, struct job client_jobs[], char * pro
         }
     }
     #pragma endregion
-    
+    // printf("%d\n", 52);
     #pragma region  EXECUTE COMMANDS
     if (foreground == 1) 
     {
-        processForegroundCommand(process_output);
+        processForegroundCommand(process_output, running_pid);
     }
     else if (background == 1)
     {
@@ -898,11 +913,11 @@ void processStarter(char * client_inString, struct job client_jobs[], char * pro
     {
         if (pipe_index != -1) 
         {
-            processPipeCommand(args, ctr, pipe_index, background_index, process_output);
+            processPipeCommand(args, ctr, pipe_index, background_index, process_output, running_pid);
         }
         else 
         {
-            processSingleCommand(args, ctr, input_index, output_index, error_index, background_index, process_output);
+            processSingleCommand(args, ctr, input_index, output_index, error_index, background_index, process_output, running_pid);
         }
     }
     #pragma endregion
@@ -910,9 +925,10 @@ void processStarter(char * client_inString, struct job client_jobs[], char * pro
     //     printf("signal(SIGINT) error");
     // if (signal(SIGTSTP, sig_ignore) == SIG_ERR)
     //     printf("signal(SIGTSTP) error");
+    // printf("%d\n", 53);
     findAndPrintCompletedJobs(process_output);
     copy_arrays(job_array, client_jobs);
-
+    // printf("%d\n", 54);
     // printf("======================================================\n");
     // printf("=====================COMPLETED PROCESS===================\n");
     // printf("======================================================\n");
