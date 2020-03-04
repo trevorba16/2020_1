@@ -594,7 +594,7 @@ void processPipeCommand(char** init_args, int argc, int pipe_index, int backgrou
 void processForegroundCommand(char * output_content, int *running_pid) 
 {
     int max_index = getMostRecentBackground(1);
-
+    
     // printf("max_index: %d\n", max_index);
 
     int max_pid = job_array[max_index].pid;
@@ -622,7 +622,9 @@ void processForegroundCommand(char * output_content, int *running_pid)
 
         if (WIFEXITED(status)) 
         {
+            // printf("Exited\n");
             removeJobFromLog(max_index);
+            //printf("child %d exited, status=%d\n", ppid, WEXITSTATUS(status));
             count++;
         } 
         else if (WIFSIGNALED(status)) 

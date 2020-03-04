@@ -49,6 +49,7 @@ DESCRIPTION:
 #include <signal.h>
 #include <errno.h>
 #include <ctype.h>
+#include <time.h>
 
 #define MAXHOSTNAME 80
 #define NUM_THREADS 20
@@ -97,6 +98,8 @@ static char u_server_path[PATHMAX+1] = "/tmp";  /* default */
 static char u_socket_path[PATHMAX+1];
 static char u_log_path[PATHMAX+1];
 static char u_pid_path[PATHMAX+1];
+
+FILE * log_file;
 #pragma endregion
 
 #pragma region FUNCTION DECLARATIONS
@@ -342,12 +345,40 @@ void * StartJobsFromInput(void * arg)
         pthread_mutex_unlock(&client_array_lock);
         if (c == '\0')
         {
-            // printf("%d\n", 21);
         }
         else 
         {
-            // printf("%d\n", 22);
+            int hours, minutes, seconds, day, month, year;
+            time_t now;
+            time(&now);
+            struct tm *local = localtime(&now);
+
+            hours = local->tm_hour;      	// get hours since midnight (0-23)
+            minutes = local->tm_min;     	// get minutes passed after the hour (0-59)
+            seconds = local->tm_sec;     	// get seconds passed after minute (0-59)
+
+            day = local->tm_mday;        	// get day of month (1 to 31)
+            month = local->tm_mon + 1;   	// get month of year (0 to 11)
+            year = local->tm_year + 1900;	// get year since 1900
+
+            char mon[4] = {0};
+
+            mon[0] = ctime(&now)[4];
+            mon[1] = ctime(&now)[5];
+            mon[2] = ctime(&now)[6];
+            mon[4] = '\0';
+
+           
+
             // printf("got something in inString: %s\n", client_thr_data[array_idx].inString);
+            log_file = fopen(u_log_path, "aw");
+            fprintf(log_file, "%s %d %02d:%02d:%02d yashd[%s:%d]: %s\n", 
+                        mon, day, hours, minutes, seconds, 
+                        inet_ntoa(client_thr_data[array_idx].from.sin_addr), ntohs(client_thr_data[array_idx].from.sin_port),
+                        client_thr_data[array_idx].inString);
+
+            //fprintf(log_file, "Some text: %s\n", client_thr_data[array_idx].inString);
+            fclose(log_file);
 
             processStarter(client_thr_data[array_idx].inString, client_array[thread_info->state_array_idx].job_array, process_output, client_array[array_idx].pid_point);
 
@@ -595,7 +626,7 @@ void daemon_init(const char * const path, uint mask)
 {
   pid_t pid;
   char buff[256];
-  static FILE *log; /* for the log */
+  //static FILE *log; /* for the log */
   int fd;
   int k;
 
@@ -623,10 +654,10 @@ void daemon_init(const char * const path, uint mask)
   /* From this point on printf and scanf have no effect */
 
   /* Redirecting stderr to u_log_path */
-  log = fopen(u_log_path, "aw"); /* attach stderr to u_log_path */
-  fd = fileno(log);  /* obtain file descriptor of the log */
-  dup2(fd, STDERR_FILENO);
-  close (fd);
+  log_file = fopen(u_log_path, "aw"); /* attach stderr to u_log_path */
+//   fd = fileno(log);  /* obtain file descriptor of the log */
+//   dup2(fd, STDERR_FILENO);
+//   close (fd);
   /* From this point on printing to stderr will go to /tmp/u-echod.log */
 
   /* Establish handlers for signals */
