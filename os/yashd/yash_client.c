@@ -102,7 +102,7 @@ int main(int argc, char **argv ) {
     server.sin_family = AF_INET; 
     /* OR server.sin_family = hp->h_addrtype; */
     
-    server.sin_port = htons(atoi(argv[2]));
+    server.sin_port = htons(3826);
     
     /*   Create socket on which to send  and receive */
     

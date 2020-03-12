@@ -242,7 +242,7 @@ int getOpenClientIndex()
 {
     for (int i = 0; i < NUM_THREADS; i++)
     {
-        if (client_array[i].in_use = 0)
+        if (client_array[i].in_use == 0)
             return i;
     }
 }
@@ -366,7 +366,7 @@ void * StartJobsFromInput(void * arg)
             mon[0] = ctime(&now)[4];
             mon[1] = ctime(&now)[5];
             mon[2] = ctime(&now)[6];
-            mon[4] = '\0';
+            mon[3] = '\0';
 
            
 
