@@ -1,7 +1,7 @@
 all: client server
 #client
-client: yash_client.c
-	gcc -g -o yash yash_client.c -lreadline
+client: yash.c
+	gcc -g -o yash yash.c -lreadline
 #server
-server: yash_server.c
-	gcc -g -o yashd yash_server.c server_thread.c -lpthread
+server: yash.c
+	gcc -g -o yashd yashd.c server_thread.c -lpthread
