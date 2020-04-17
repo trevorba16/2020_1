@@ -72,6 +72,26 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+struct thread* get_thread(tid_t tid);
+
+
+// struct thread* get_thread(tid_t tid) 
+// {
+//   struct list_elem *elem;
+
+//   for (elem = list_begin (&all_list); elem != list_end (&all_list);
+//        elem = list_next (elem))
+//   {
+//     struct thread *thrd = list_entry (elem, struct thread, allelem);
+
+//     if (thrd->tid == tid)
+//     {
+//       return thrd;
+//     }
+//   }
+
+//     return NULL;
+// }
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -466,6 +486,12 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+
+  // #ifdef USERPROG
+  //   t->next_fd = 3; //expect for std io
+  //   list_init(&(t->file_descriptors));
+  //   list_init(&t->child_processes);
+  // #endif
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);

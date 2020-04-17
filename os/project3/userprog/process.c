@@ -17,10 +17,14 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/synch.h"
 
 #define LOGGING_LEVEL 6
 
 #include <log.h>
+
+struct semaphore launched; // really belongs to the thread struct
+struct semaphore exiting; // really belongs to the thread struct
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -46,12 +50,20 @@ process_execute (const char *command)
   cmd_copy = palloc_get_page (0);
   if (cmd_copy == NULL)
     return TID_ERROR;
-  strlcpy (cmd_copy, command, PGSIZE);
+  strlcpy(cmd_copy, command, PGSIZE);
 
+  char* args;
+  char* command_name = strtok_r(command, " ", &args);
+
+
+  sema_init(&launched,0); //t->launched later
+  sema_init(&exiting,0);
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (command, PRI_DEFAULT, start_process, cmd_copy);
+  tid = thread_create (command_name, PRI_DEFAULT, start_process, cmd_copy);
+  
   if (tid == TID_ERROR)
     palloc_free_page (cmd_copy);
+  sema_down(&launched);
   return tid;
 }
 
@@ -64,10 +76,9 @@ start_process (void *command)
   struct intr_frame if_;
   bool success;
 
-  // Break command string into tokens
-  // First token will be executable
-  // If command has no args, command==executable
-
+  // Break the command string up into tokens
+  // First token will be the executable
+  // If the command has no args then command=executable
   log(L_TRACE, "start_process()");
 
   /* Initialize interrupt frame and load executable. */
@@ -75,20 +86,20 @@ start_process (void *command)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (executable, &if_.eip, &if_.esp);
+  success = load (executable, &if_.eip, &if_.esp); // a.
 
   /* If load failed, quit. */
-  palloc_free_page (executable);
+  palloc_free_page (command);
   if (!success)
     thread_exit ();
-
+  sema_up(&launched);
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
      arguments on the stack in the form of a `struct intr_frame',
      we just point the stack pointer (%esp) to our stack frame
      and jump to it. */
-  asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
+  asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory"); //c
   NOT_REACHED ();
 }
 
@@ -104,9 +115,10 @@ start_process (void *command)
 int
 process_wait (tid_t child_tid UNUSED)
 {
-  // TODO
-  // Wait for child to exit and reap childs exit status
-  while(1);
+    // Wait for the child to exit and reap the childs exit status
+    sema_down(&exiting);
+    // here means child has exited; get childs exit status form its thread
+
 }
 
 /* Free the current process's resources. */
@@ -132,6 +144,7 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+  sema_up(&exiting);
 }
 
 /* Sets up the CPU for running user code in the current
@@ -213,7 +226,7 @@ struct Elf32_Phdr
 #define PF_W 2          /* Writable. */
 #define PF_R 4          /* Readable. */
 
-static bool setup_stack (const char *cmdstr, void **esp);
+static bool setup_stack (char *cmdstr, void **esp);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -240,12 +253,15 @@ load (const char *cmdstr, void (**eip) (void), void **esp)
     goto done;
   process_activate ();
 
-  // TODO 
-  // File to be opened and loaded is the first token of the cmdstr: (ls -l foo) -> file is "ls"
-  char *file_name = cmdstr;
-
+  // file to be opened and loaded is the first token of the cmdstr: ("ls -l foo") - file is "ls"  
   /* Open executable file. */
-  file = filesys_open (file_name); 
+  char *args;
+  char *cmdstr_copy = malloc(strlen(cmdstr) * sizeof(char));
+
+  strlcpy(cmdstr_copy, cmdstr, strlen(cmdstr) + 1);
+  char *file_name = strtok_r(cmdstr, " ", &args);
+
+  file = filesys_open (file_name);
   if (file == NULL)
     {
       printf ("load: %s: open failed\n", file_name);
@@ -325,7 +341,7 @@ load (const char *cmdstr, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
-  if (!setup_stack (cmdstr, esp)) // b. 
+  if (!setup_stack (cmdstr_copy, esp))  //b. 
     goto done;
 
   /* Start address. */
@@ -450,55 +466,98 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 }
 
 /* Create a minimal stack by mapping a zeroed page at the top of
-   user virtual memory. */
-/*
-  Must populate the stack with arguments: Ret_addr(0):argc:argv:argv[0]:argv[1].....
-*/
+   user virtual memory.
+  Must populate the stack with arguments: Ret_addr(0):argc:argv:argv[0]:argv[1].... */
 static bool
-setup_stack (const char *cmdstr, void **esp)
+setup_stack (char *cmdstr, void **esp)
 {
   uint8_t *kpage;
-  bool success = false;
   char *espchar, *argv0ptr;
   uint32_t *espword;
+  bool success = false;
 
   log(L_TRACE, "setup_stack()");
-
+  // This ia hack to pass args-none; Generic case will involve parsing the
+  // cmdstr and populating the stack accordingly
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   if (kpage != NULL)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success) {
-        *esp = PHYS_BASE; // Everything we write is going to be in this space
-        // Start at PHYS_BASE, subtract length of args_none + 1 (null terminate)
-        int len = strlen(cmdstr) + 1;
+      if (success) 
+      {
+        *esp = PHYS_BASE;
 
-        *esp -= len; //move stack pointer
-        strlcpy(*esp, cmdstr, len); 
+        int input_length = strlen(cmdstr) + 1;
+
+        char **cmd_args = (char **) malloc(input_length * sizeof(char));
+
+        int argc = 0;
+        char* cmdstr_args_str;
+        char* argument;
+
+        cmd_args[0] = strtok_r(cmdstr, " ", &cmdstr_args_str);
+        
+        argc++;
+
+        while((argument = strtok_r(cmdstr_args_str, " ", &cmdstr_args_str)))
+        {
+          cmd_args[argc] = argument;
+          argc++;
+        }
+
+        int **addresses = (int **) malloc(argc * sizeof(int *));
+
+
+
+        for (int i = argc - 1; i >= 0; i--)
+        {
+          int arg_len = strlen(cmd_args[i]) + 1;
+          *esp -= arg_len;
+          addresses[i] = *esp;
+          strlcpy(*esp, cmd_args[i], arg_len);
+        }
 
         espchar = (char *)(*esp); 
-        argv0ptr == espchar;
-        espchar--;
-        *espchar = 0; // padding
-        espchar--;
-        *espchar = 0; // padding
+        
+        int pad_ctr = 0;
 
-        //padding and null pointer
-        *esp -= 6; 
+        while( (int)espchar % 4 != 0)
+        {
+          espchar--;
+          *espchar = 0; // padding
+          pad_ctr++;
+        }
+
+        *esp -= (pad_ctr + 4);
         espword = (uint32_t *)(*esp);
+        *espword = 0; //add line of padding
+
+        pad_ctr = 1;
+
+        char *argvptr;
+
+        for (int i = argc - 1; i >= 0; i--)
+        {
+          espword--; //increment
+          *espword = addresses[i];
+          if (i == 0)
+            argvptr = espword;
+          pad_ctr++;
+        }
+
+        *esp -= (pad_ctr * 4);
+        
+        espword = (uint32_t *)(*esp);
+        *espword = argvptr;
+
+        espword--;
+        *espword = argc;
+
+        espword--;
         *espword = 0;
-        *espword--;
-        *espword = argv0ptr;
-        char *argvptr = espword;
-        *esp -= 8;
-        espword = (uint32_t *)(*esp);
-        *esp = argvptr; //argv points to address of argv[0]
-        espword--;
-        *espword = 1; // argc
-        espword--;
-        *espword = 0; // ret address
+
         *esp = espword;
-	  }
+      }
       else {
         palloc_free_page (kpage);
 	  }
