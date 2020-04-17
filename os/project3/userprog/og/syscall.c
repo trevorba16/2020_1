@@ -6,18 +6,8 @@
 #include "threads/vaddr.h"
 
 typedef int pid_t;
-
-//TODO Rename
-struct proc_file 
-{
-  struct file* ptr;
-  int fd;
-  struct list_elem elem;
-};
-
 void (*syscall_handlers[20])(struct intr_frame *);
-void* check_addr(const void *vaddr);
-struct proc_file* list_search(struct list* files, int fd);
+
 
 static void syscall_handler (struct intr_frame *f);
 
@@ -50,6 +40,9 @@ void seek(int fd, int position);
 unsigned tell(int fd);
 void close(int fd);
 
+
+bool is_valid_pointer(uint32_t* esp,uint8_t argc);
+
 void
 syscall_init (void)
 {
@@ -79,126 +72,31 @@ void sys_exit(struct intr_frame* f)
   arg1 = (uint32_t)(*user_esp);
   exit(arg1);
 };
-
-void sys_exec(struct intr_frame* f)
-{
-  uint32_t arg1;
-  uint32_t *user_esp = f->esp;
-  user_esp++;
-  check_addr(user_esp);
-  arg1 = (uint32_t)(*user_esp);
-  f->eax = process_execute(arg1);
-};
-
+void sys_exec(struct intr_frame* f){};
 void sys_wait(struct intr_frame* f){};
-
-void sys_create(struct intr_frame* f)
-{
-  uint32_t arg1, arg2;
-  uint32_t *user_esp = f->esp;
-  user_esp++;
-  check_addr(user_esp);
-  arg1 = (uint32_t)(*user_esp);
-  user_esp++;
-  check_addr(user_esp);
-  arg2 = (uint32_t)(*user_esp);
-
-  f->eax = filesys_create(arg1,arg2);
-};
-
-void sys_remove(struct intr_frame* f)
-{
-  uint32_t arg1;
-  uint32_t *user_esp = f->esp;
-  user_esp++;
-  check_addr(user_esp);
-  arg1 = (uint32_t)(*user_esp);
-  f->eax = (filesys_remove(arg1) != NULL);
-};
-
-void sys_open(struct intr_frame* f)
-{
-  uint32_t arg1;
-  uint32_t *user_esp = f->esp;
-  user_esp++;
-  check_addr(user_esp);
-  arg1 = (uint32_t)(*user_esp);
-
-
-  struct file* fptr;
-  fptr = filesys_open(arg1);
-
-  if (fptr == NULL)
-  {
-    f->eax = -1;
-  }
-  else 
-  {
-    struct proc_file *pfile = malloc(sizeof(*pfile));
-    pfile->ptr = fptr;
-    pfile->fd = thread_current()->fd_count;
-    thread_current()->fd_count++;
-    list_push_back(&thread_current()->files, &pfile->elem);
-    f->eax = pfile->fd;
-  }
-
-};
-void sys_filesize(struct intr_frame* f)
-{
-  uint32_t arg1;
-  uint32_t *user_esp = f->esp;
-  user_esp++;
-  check_addr(user_esp);
-  arg1 = (uint32_t)(*user_esp);
-
-  struct proc_file* file_result = list_search(&thread_current()->files, arg1);
-  f->eax = file_length(file_result->ptr);
-
-};
-void sys_read(struct intr_frame* f)
-{
-  uint32_t arg1, arg2, arg3;
-  uint32_t *user_esp = f->esp;
-  user_esp++;
-  check_addr(user_esp);
-  arg1 = (uint32_t)(*user_esp);
-  user_esp++;
-  check_addr(user_esp);
-  arg2 = (uint32_t)(*user_esp);
-  user_esp++;
-  check_addr(user_esp);
-  arg3 = (uint32_t)(*user_esp);
-
-  f->eax = read((int)arg1, (char *)arg2, (unsigned)arg3);
-};
+void sys_create(struct intr_frame* f){};
+void sys_remove(struct intr_frame* f){};
+void sys_open(struct intr_frame* f){};
+void sys_filesize(struct intr_frame* f){};
+void sys_read(struct intr_frame* f){};
 
 void sys_write(struct intr_frame* f)
 {
+
   uint32_t arg1, arg2, arg3;
   uint32_t *user_esp = f->esp;
   user_esp++;
-  check_addr(user_esp);
   arg1 = (uint32_t)(*user_esp);
   user_esp++;
-  check_addr(user_esp);
   arg2 = (uint32_t)(*user_esp);
   user_esp++;
-  check_addr(user_esp);
   arg3 = (uint32_t)(*user_esp);
   f->eax = write((int)arg1, (char *)arg2, (unsigned)arg3);
 
 };
 void sys_seek(struct intr_frame* f){};
 void sys_tell(struct intr_frame* f){};
-void sys_close(struct intr_frame* f)
-{
-  uint32_t arg1;
-  uint32_t *user_esp = f->esp;
-  user_esp++;
-  check_addr(user_esp);
-  arg1 = (uint32_t)(*user_esp);
-  close(arg1);
-};
+void sys_close(struct intr_frame* f){};
 
 
 
@@ -206,14 +104,13 @@ void sys_close(struct intr_frame* f)
 static void
 syscall_handler (struct intr_frame *f UNUSED)
 {
-  check_addr(f->esp);
-
   int callNo = * (int *)f->esp;
   
   syscall_handlers[callNo](f);
 
-}
+  // thread_exit();
 
+}
 int write (int fd, void *buffer, unsigned size)
 {
   if (fd == 1) // STDOUT
@@ -222,110 +119,14 @@ int write (int fd, void *buffer, unsigned size)
     return size;
   }
 }
-
-int read(int fd, void*buffer, unsigned size)
-{
-  if (fd == 0)
-  {
-    for (int i = 0; i < size; i++)
-    {
-      buffer = input_getc();
-    }
-    return size;
-  }
-  else
-  {
-    struct proc_file* fptr = list_search(&thread_current()->files, fd);
-    if (fptr == NULL)
-    {
-      return -1;
-    }
-    else 
-    {
-      return file_read_at(fptr->ptr, buffer, size, 0);
-    }
-
-  }
-  
-}
-
-void close(int fd)
-{
-  struct list_elem *e;
-
-  struct list* files = &thread_current()->files;
-
-  for (e = list_begin(files); e != list_end(files); e = list_next(e))
-  {
-    struct proc_file *f = list_entry(e, struct proc_file, elem);
-    
-    if(f->fd == fd)
-    {
-      file_close(f->ptr);
-      list_remove(e);
-    }
-
-  }
-}
-
 void exit(int status)
 {
   struct thread *curthread = thread_current();
-  curthread->ex = true;
-  curthread->exit_status = status;
+  curthread->parent->ex  = true;
   
   printf("%s: exit(%d)\n", curthread->name, status);
   thread_exit();
 }
-
-
-
-//TODO
-void* check_addr(const void *vaddr)
-{
-	if (!is_user_vaddr(vaddr))
-	{
-		exit(-1);
-		return 0;
-	}
-	void *ptr = pagedir_get_page(thread_current()->pagedir, vaddr);
-	if (!ptr)
-	{
-		exit(-1);
-		return 0;
-	}
-	return ptr;
-}
-
-//TODO
-struct proc_file* list_search(struct list* files, int fd)
-{
-
-	struct list_elem *e;
-
-      for (e = list_begin (files); e != list_end (files);
-           e = list_next (e))
-        {
-          struct proc_file *f = list_entry (e, struct proc_file, elem);
-          if(f->fd == fd)
-          	return f;
-        }
-   return NULL;
-}
-
-void close_all_files(struct list* files)
-{
-	struct list_elem *e;
-
-  for (e = list_begin (files); e != list_end (files); e = list_next (e))
-  {
-    struct proc_file *f = list_entry (e, struct proc_file, elem);
-
-    file_close(f->ptr);
-    list_remove(e);
-  }
-}
-
 /*
 
 System Call: void halt (void)
@@ -393,3 +194,15 @@ System Call: unsigned tell (int fd)
 System Call: void close (int fd)
     Closes file descriptor fd. Exiting or terminating a process implicitly closes all its open file descriptors, as if by calling this function for each one. 
 */
+
+bool is_valid_pointer(uint32_t* esp,uint8_t argc){
+
+  for (int i = 0; i < argc; ++i)
+  {
+    if((!is_user_vaddr(esp))||(pagedir_get_page(thread_current()->pagedir,esp)==NULL))
+    {
+      return false;
+    }
+  }
+  return true;
+}

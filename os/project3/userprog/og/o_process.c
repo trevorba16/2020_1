@@ -18,16 +18,114 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "threads/synch.h"
+#include "threads/malloc.h"
 
 #define LOGGING_LEVEL 6
 
 #include <log.h>
 
-struct semaphore launched; // really belongs to the thread struct
-struct semaphore exiting; // really belongs to the thread struct
+struct list read_list;
+struct list wait_list;
+
+struct read_elem{
+  int pid;
+  int action;
+  struct list_elem elem;
+  int value;
+};
+
+struct wait_elem{
+  int pid;
+  int action;
+  struct list_elem elem;
+  struct semaphore sem;
+};
 
 static thread_func start_process NO_RETURN;
-static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static bool load (char *cmdline, void (**eip) (void), void **esp);
+struct wait_elem* make_wait_element(int pid, int action);
+
+
+void initialize_pipe()
+{
+  list_init(&read_list);
+  list_init(&wait_list);
+}
+
+void write_pipe(int pid, int action, int value)
+{
+  struct read_elem* read_item = malloc(sizeof(struct read_elem));
+  read_item->pid = pid;
+  read_item->action = action;
+  read_item->value = value;
+  list_push_back(&read_list,&read_item->elem);
+
+  /*
+  wake up the read request if necessary
+  */
+  
+  for(struct list_elem *e = list_begin(&wait_list); e != list_end(&wait_list);
+       e = list_next(e))
+  {
+
+    struct wait_elem *we = list_entry(e,struct wait_elem,elem);
+    if(we->pid == pid && we->action == action)
+    {
+      sema_up(&we->sem);
+    }
+  }
+
+}
+
+int read_pipe(int pid, int action)
+{
+  while (1)
+  {
+    struct list_elem *list_item;
+
+    for (list_item = list_begin(&read_list); list_item != list_end(&read_list); 
+        list_item = list_next(list_item))
+    {
+      struct read_elem *read_item = list_entry(list_item, struct read_elem, elem);
+      if (read_item->pid == pid && read_item->action == action)
+      {
+        list_remove(list_item);
+        int value = read_item->value;
+        free(read_item);
+        return value;
+      }
+    }
+
+    struct wait_elem *wait_item = malloc(sizeof(struct wait_elem));
+    sema_init(&wait_item->sem, 0);
+    wait_item->pid = pid;
+    wait_item->action = action;
+
+    list_push_back(&wait_list, &wait_item->elem);
+    sema_down(&wait_item->sem);
+
+    list_remove(&wait_item->elem);
+    free(wait_item);
+  }
+}
+
+// struct wait_elem* make_wait_element(int pid, int action)
+// {
+//   struct wait_elem *we = malloc(sizeof(struct wait_elem));
+
+//   we->pid = pid;
+//   we->action = action;
+//   list_push_back(&wait_list, &we->elem);
+//   sema_init(&we->sem, 0);
+
+// }
+
+void initialize_process()
+{
+  initialize_pipe();
+
+  list_init(&thread_current()->child_processes);
+}
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -50,21 +148,53 @@ process_execute (const char *command)
   cmd_copy = palloc_get_page (0);
   if (cmd_copy == NULL)
     return TID_ERROR;
-  strlcpy(cmd_copy, command, PGSIZE);
+  strlcpy (cmd_copy, command, PGSIZE);
 
   char* args;
   char* command_name = strtok_r(command, " ", &args);
 
-
-  sema_init(&launched,0); //t->launched later
-  sema_init(&exiting,0);
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (command_name, PRI_DEFAULT, start_process, cmd_copy);
-  
+
   if (tid == TID_ERROR)
     palloc_free_page (cmd_copy);
-  sema_down(&launched);
+
+  
+  struct thread *child = get_thread(tid);
+  child->parent_tid = thread_current()->tid;
+
+  struct process *p = malloc(sizeof(struct process));
+
+  if (p == NULL)
+  {
+    return -1;
+  }
+
+  p->thread = child;
+
+  list_push_back(&thread_current()->child_processes, &p->elem);
+
   return tid;
+}
+
+bool is_thread_child(tid_t tid, bool delete)
+{
+  struct thread *cur = thread_current();
+  struct list_elem *e;
+
+  for (e = list_begin(&cur->child_processes); e != list_end(&cur->child_processes); e = list_next(e))
+  {
+    struct thread *t = list_entry(e, struct process, elem)->thread;
+
+    if (tid == t->tid)
+    {
+      if (delete)
+        list_remove(e);
+      return true;
+    }
+    
+  }
+  return false;
 }
 
 /* A thread function that loads a user process and starts it
@@ -76,9 +206,9 @@ start_process (void *command)
   struct intr_frame if_;
   bool success;
 
-  // Break the command string up into tokens
-  // First token will be the executable
-  // If the command has no args then command=executable
+  // Break command string into tokens
+  // First token will be executable
+  // If command has no args, command==executable
   log(L_TRACE, "start_process()");
 
   /* Initialize interrupt frame and load executable. */
@@ -86,20 +216,20 @@ start_process (void *command)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (executable, &if_.eip, &if_.esp); // a.
+  success = load (executable, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
   palloc_free_page (command);
   if (!success)
     thread_exit ();
-  sema_up(&launched);
+
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
      arguments on the stack in the form of a `struct intr_frame',
      we just point the stack pointer (%esp) to our stack frame
      and jump to it. */
-  asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory"); //c
+  asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
   NOT_REACHED ();
 }
 
@@ -113,12 +243,16 @@ start_process (void *command)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED)
+process_wait (tid_t child_tid)
 {
-    // Wait for the child to exit and reap the childs exit status
-    sema_down(&exiting);
-    // here means child has exited; get childs exit status form its thread
+  if (!is_thread_child(child_tid, true))
+  {
+    return -1;
+  }
 
+  return read_pipe(child_tid,2);
+
+  return 0;
 }
 
 /* Free the current process's resources. */
@@ -127,10 +261,6 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
-
-  int exit_code = cur->exit_status;
-
-  close_all_files(&thread_current()->files);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -148,7 +278,7 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
-  sema_up(&exiting);
+    write_pipe(cur->tid, 2, 0);
 }
 
 /* Sets up the CPU for running user code in the current
@@ -241,7 +371,7 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
 bool
-load (const char *cmdstr, void (**eip) (void), void **esp)
+load (char *cmdstr, void (**eip) (void), void **esp)
 {
   log(L_TRACE, "load()");
   struct thread *t = thread_current ();
@@ -257,15 +387,15 @@ load (const char *cmdstr, void (**eip) (void), void **esp)
     goto done;
   process_activate ();
 
-  // file to be opened and loaded is the first token of the cmdstr: ("ls -l foo") - file is "ls"  
-  /* Open executable file. */
+  // File to be opened and loaded is the first token of the cmdstr: (ls -l foo) -> file is "ls"
   char *args;
   char *cmdstr_copy = malloc(strlen(cmdstr) * sizeof(char));
 
   strlcpy(cmdstr_copy, cmdstr, strlen(cmdstr) + 1);
   char *file_name = strtok_r(cmdstr, " ", &args);
 
-  file = filesys_open (file_name);
+  /* Open executable file. */
+  file = filesys_open (file_name); 
   if (file == NULL)
     {
       printf ("load: %s: open failed\n", file_name);
@@ -345,7 +475,7 @@ load (const char *cmdstr, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
-  if (!setup_stack (cmdstr_copy, esp))  //b. 
+  if (!setup_stack (cmdstr_copy, esp)) // b. 
     goto done;
 
   /* Start address. */
@@ -470,8 +600,10 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 }
 
 /* Create a minimal stack by mapping a zeroed page at the top of
-   user virtual memory.
-  Must populate the stack with arguments: Ret_addr(0):argc:argv:argv[0]:argv[1].... */
+   user virtual memory. */
+/*
+  Must populate the stack with arguments: Ret_addr(0):argc:argv:argv[0]:argv[1].....
+*/
 static bool
 setup_stack (char *cmdstr, void **esp)
 {
@@ -589,3 +721,4 @@ install_page (void *upage, void *kpage, bool writable)
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
 }
+

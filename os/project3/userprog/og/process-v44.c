@@ -52,15 +52,10 @@ process_execute (const char *command)
     return TID_ERROR;
   strlcpy(cmd_copy, command, PGSIZE);
 
-  char* args;
-  char* command_name = strtok_r(command, " ", &args);
-
-
   sema_init(&launched,0); //t->launched later
   sema_init(&exiting,0);
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (command_name, PRI_DEFAULT, start_process, cmd_copy);
-  
+  tid = thread_create (command, PRI_DEFAULT, start_process, cmd_copy);
   if (tid == TID_ERROR)
     palloc_free_page (cmd_copy);
   sema_down(&launched);
@@ -127,10 +122,6 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
-
-  int exit_code = cur->exit_status;
-
-  close_all_files(&thread_current()->files);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -230,7 +221,7 @@ struct Elf32_Phdr
 #define PF_W 2          /* Writable. */
 #define PF_R 4          /* Readable. */
 
-static bool setup_stack (char *cmdstr, void **esp);
+static bool setup_stack (const char *cmdstr, void **esp);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -256,15 +247,9 @@ load (const char *cmdstr, void (**eip) (void), void **esp)
   if (t->pagedir == NULL)
     goto done;
   process_activate ();
-
   // file to be opened and loaded is the first token of the cmdstr: ("ls -l foo") - file is "ls"  
   /* Open executable file. */
-  char *args;
-  char *cmdstr_copy = malloc(strlen(cmdstr) * sizeof(char));
-
-  strlcpy(cmdstr_copy, cmdstr, strlen(cmdstr) + 1);
-  char *file_name = strtok_r(cmdstr, " ", &args);
-
+  char *file_name = cmdstr;
   file = filesys_open (file_name);
   if (file == NULL)
     {
@@ -345,7 +330,7 @@ load (const char *cmdstr, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
-  if (!setup_stack (cmdstr_copy, esp))  //b. 
+  if (!setup_stack (cmdstr, esp))  //b. 
     goto done;
 
   /* Start address. */
@@ -473,7 +458,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
    user virtual memory.
   Must populate the stack with arguments: Ret_addr(0):argc:argv:argv[0]:argv[1].... */
 static bool
-setup_stack (char *cmdstr, void **esp)
+setup_stack (const char *cmdstr, void **esp)
 {
   uint8_t *kpage;
   char *espchar, *argv0ptr;
@@ -487,80 +472,29 @@ setup_stack (char *cmdstr, void **esp)
   if (kpage != NULL)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success) 
-      {
+      if (success) {
         *esp = PHYS_BASE;
-
-        int input_length = strlen(cmdstr) + 1;
-
-        char **cmd_args = (char **) malloc(input_length * sizeof(char));
-
-        int argc = 0;
-        char* cmdstr_args_str;
-        char* argument;
-
-        cmd_args[0] = strtok_r(cmdstr, " ", &cmdstr_args_str);
-        
-        argc++;
-
-        while((argument = strtok_r(cmdstr_args_str, " ", &cmdstr_args_str)))
-        {
-          cmd_args[argc] = argument;
-          argc++;
-        }
-
-        int **addresses = (int **) malloc(argc * sizeof(int *));
-
-
-
-        for (int i = argc - 1; i >= 0; i--)
-        {
-          int arg_len = strlen(cmd_args[i]) + 1;
-          *esp -= arg_len;
-          addresses[i] = *esp;
-          strlcpy(*esp, cmd_args[i], arg_len);
-        }
-
-        espchar = (char *)(*esp); 
-        
-        int pad_ctr = 0;
-
-        while( (int)espchar % 4 != 0)
-        {
-          espchar--;
-          *espchar = 0; // padding
-          pad_ctr++;
-        }
-
-        *esp -= (pad_ctr + 4);
-        espword = (uint32_t *)(*esp);
-        *espword = 0; //add line of padding
-
-        pad_ctr = 1;
-
-        char *argvptr;
-
-        for (int i = argc - 1; i >= 0; i--)
-        {
-          espword--; //increment
-          *espword = addresses[i];
-          if (i == 0)
-            argvptr = espword;
-          pad_ctr++;
-        }
-
-        *esp -= (pad_ctr * 4);
-        
-        espword = (uint32_t *)(*esp);
-        *espword = argvptr;
-
-        espword--;
-        *espword = argc;
-
-        espword--;
-        *espword = 0;
-
-        *esp = espword;
+	int len = strlen(cmdstr)+1;;
+	*esp -= len;
+	strlcpy(*esp, cmdstr, len);
+	espchar = (char *)(*esp); argv0ptr = espchar;
+	espchar--;
+	*espchar = 0; //padding
+	espchar--;
+	*espchar = 0; //padding
+	*esp -=6; // padding and null
+	espword = (uint32_t *)(*esp);
+	*espword = 0;
+	espword--;
+	*espword = argv0ptr;
+	char *argvptr = espword;
+	*esp -=8; espword = (uint32_t *)(*esp);
+	*espword = argvptr; //argv points to argv[0]
+	espword--;
+	*espword = 1; // argc
+	espword--;
+	*espword = 0; // return address
+	*esp = espword;
       }
       else {
         palloc_free_page (kpage);

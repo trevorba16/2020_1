@@ -5,7 +5,6 @@
 #include <list.h>
 #include <stdint.h>
 
-#include "threads/synch.h"
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -94,19 +93,10 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
-    int64_t waketick;
-    bool ex;
-    struct list files;
-    int fd_count;
-
-    struct thread* parent;
-
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t exit_status;
     uint32_t *pagedir;                  /* Page directory. */
-
-
 #endif
 
     /* Owned by thread.c. */
