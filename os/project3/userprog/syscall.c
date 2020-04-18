@@ -57,10 +57,13 @@ syscall_init (void)
 
   syscall_handlers[SYS_HALT] = &sys_halt;
   syscall_handlers[SYS_EXIT] = &sys_exit;
+  syscall_handlers[SYS_EXEC] = &sys_exec;
   syscall_handlers[SYS_WAIT] = &sys_wait;
   syscall_handlers[SYS_CREATE] = &sys_create;
   syscall_handlers[SYS_REMOVE] = &sys_remove;
   syscall_handlers[SYS_OPEN] = &sys_open;
+  syscall_handlers[SYS_FILESIZE] = &sys_filesize;
+  syscall_handlers[SYS_READ] = &sys_read;
   syscall_handlers[SYS_WRITE] = &sys_write;
   syscall_handlers[SYS_SEEK] = &sys_seek;
   syscall_handlers[SYS_TELL] = &sys_tell;
@@ -76,6 +79,7 @@ void sys_exit(struct intr_frame* f)
   uint32_t arg1;
   uint32_t *user_esp = f->esp;
   user_esp++;
+  check_addr(user_esp);
   arg1 = (uint32_t)(*user_esp);
   exit(arg1);
 };
