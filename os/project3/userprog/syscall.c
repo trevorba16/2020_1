@@ -107,6 +107,8 @@ void sys_create(struct intr_frame* f)
   check_addr(user_esp);
   arg2 = (uint32_t)(*user_esp);
 
+  check_addr(arg1);
+  
   f->eax = filesys_create(arg1,arg2);
 };
 
@@ -128,6 +130,7 @@ void sys_open(struct intr_frame* f)
   check_addr(user_esp);
   arg1 = (uint32_t)(*user_esp);
 
+  check_addr(arg1);
 
   struct file* fptr;
   fptr = filesys_open(arg1);
@@ -169,9 +172,12 @@ void sys_read(struct intr_frame* f)
   user_esp++;
   check_addr(user_esp);
   arg2 = (uint32_t)(*user_esp);
+
+  check_addr(arg2);
   user_esp++;
   check_addr(user_esp);
   arg3 = (uint32_t)(*user_esp);
+
 
   f->eax = read((int)arg1, (char *)arg2, (unsigned)arg3);
 };
@@ -186,6 +192,7 @@ void sys_write(struct intr_frame* f)
   user_esp++;
   check_addr(user_esp);
   arg2 = (uint32_t)(*user_esp);
+  check_addr(arg2);
   user_esp++;
   check_addr(user_esp);
   arg3 = (uint32_t)(*user_esp);
@@ -204,9 +211,6 @@ void sys_close(struct intr_frame* f)
   close(arg1);
 };
 
-
-
-
 static void
 syscall_handler (struct intr_frame *f UNUSED)
 {
@@ -220,10 +224,25 @@ syscall_handler (struct intr_frame *f UNUSED)
 
 int write (int fd, void *buffer, unsigned size)
 {
-  if (fd == 1) // STDOUT
+  if (fd == 1)
   {
     putbuf(buffer, size);
     return size;
+  }
+  else
+  {
+    struct proc_file* fptr = list_search(&thread_current()->files, fd);
+
+    if (fptr == NULL)
+    {
+      return -1;
+    }
+    else 
+    {
+      int ret = file_write(fptr->ptr, buffer, size);
+
+      return ret;
+    }
   }
 }
 
