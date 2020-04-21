@@ -5,7 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 
-#include "threads/synch.h"
+#include <threads/synch.h>
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -101,6 +101,14 @@ struct thread
 
     struct thread* parent;
 
+    struct list children;
+    struct file *current_file;
+
+    struct lock child_lock;
+    struct condition child_condition;
+
+    tid_t wait_for_thread;
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t exit_status;
@@ -111,6 +119,14 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+  };
+
+struct child_thread
+  {
+    tid_t tid;
+    struct list_elem elem;
+    int exit_status;
+    bool used;
   };
 
 /* If false (default), use round-robin scheduler.
@@ -148,5 +164,12 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+void file_lock_acquire();
+
+void file_lock_release();
+
+
+
 
 #endif /* threads/thread.h */

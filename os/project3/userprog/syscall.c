@@ -37,7 +37,7 @@ void sys_close(struct intr_frame* f);
 
 void halt();
 void exit(int status);
-pid_t exec(const char *file);
+int exec(char *filename);
 int wait(pid_t pid);
 
 bool create(const char *file, unsigned size);
@@ -91,10 +91,20 @@ void sys_exec(struct intr_frame* f)
   user_esp++;
   check_addr(user_esp);
   arg1 = (uint32_t)(*user_esp);
-  f->eax = process_execute(arg1);
+  check_addr(arg1);
+  f->eax = exec(arg1);
 };
 
-void sys_wait(struct intr_frame* f){};
+void sys_wait(struct intr_frame* f)
+{
+  uint32_t arg1;
+  uint32_t *user_esp = f->esp;
+  user_esp++;
+  check_addr(user_esp);
+  arg1 = (uint32_t)(*user_esp);
+
+  f->eax = process_wait(arg1);
+};
 
 void sys_create(struct intr_frame* f)
 {
@@ -108,8 +118,12 @@ void sys_create(struct intr_frame* f)
   arg2 = (uint32_t)(*user_esp);
 
   check_addr(arg1);
+
+  file_lock_acquire();
   
   f->eax = filesys_create(arg1,arg2);
+
+  file_lock_release();
 };
 
 void sys_remove(struct intr_frame* f)
@@ -119,7 +133,10 @@ void sys_remove(struct intr_frame* f)
   user_esp++;
   check_addr(user_esp);
   arg1 = (uint32_t)(*user_esp);
+
+  file_lock_acquire();
   f->eax = (filesys_remove(arg1) != NULL);
+  file_lock_release();
 };
 
 void sys_open(struct intr_frame* f)
@@ -133,7 +150,10 @@ void sys_open(struct intr_frame* f)
   check_addr(arg1);
 
   struct file* fptr;
+
+  file_lock_acquire();
   fptr = filesys_open(arg1);
+  file_lock_release();
 
   if (fptr == NULL)
   {
@@ -150,6 +170,7 @@ void sys_open(struct intr_frame* f)
   }
 
 };
+
 void sys_filesize(struct intr_frame* f)
 {
   uint32_t arg1;
@@ -159,9 +180,14 @@ void sys_filesize(struct intr_frame* f)
   arg1 = (uint32_t)(*user_esp);
 
   struct proc_file* file_result = list_search(&thread_current()->files, arg1);
+
+  file_lock_acquire();
+
   f->eax = file_length(file_result->ptr);
 
+  file_lock_release();
 };
+
 void sys_read(struct intr_frame* f)
 {
   uint32_t arg1, arg2, arg3;
@@ -178,8 +204,9 @@ void sys_read(struct intr_frame* f)
   check_addr(user_esp);
   arg3 = (uint32_t)(*user_esp);
 
-
+  file_lock_acquire();
   f->eax = read((int)arg1, (char *)arg2, (unsigned)arg3);
+  file_lock_release();
 };
 
 void sys_write(struct intr_frame* f)
@@ -196,11 +223,45 @@ void sys_write(struct intr_frame* f)
   user_esp++;
   check_addr(user_esp);
   arg3 = (uint32_t)(*user_esp);
-  f->eax = write((int)arg1, (char *)arg2, (unsigned)arg3);
 
+  file_lock_acquire();
+  f->eax = write((int)arg1, (char *)arg2, (unsigned)arg3);
+  file_lock_release();
 };
-void sys_seek(struct intr_frame* f){};
-void sys_tell(struct intr_frame* f){};
+
+void sys_seek(struct intr_frame* f)
+{
+  uint32_t arg1, arg2;
+  uint32_t *user_esp = f->esp;
+  user_esp++;
+  check_addr(user_esp);
+  arg1 = (uint32_t)(*user_esp);
+  user_esp++;
+  check_addr(user_esp);
+  arg2 = (uint32_t)(*user_esp);
+
+  file_lock_acquire();
+
+  file_seek(list_search(&thread_current()->files, arg1)->ptr, arg2);
+  
+  file_lock_release();
+};
+
+void sys_tell(struct intr_frame* f)
+{
+  uint32_t arg1;
+  uint32_t *user_esp = f->esp;
+  user_esp++;
+  check_addr(user_esp);
+  arg1 = (uint32_t)(*user_esp);
+
+  file_lock_acquire();
+
+  f->eax = file_tell(list_search(&thread_current()->files, arg1)->ptr);
+
+  file_lock_release();
+};
+
 void sys_close(struct intr_frame* f)
 {
   uint32_t arg1;
@@ -219,6 +280,34 @@ syscall_handler (struct intr_frame *f UNUSED)
   int callNo = * (int *)f->esp;
   
   syscall_handlers[callNo](f);
+
+}
+
+int exec (char *filename)
+{
+
+  file_lock_acquire();
+
+  int namelen = strlen(filename);
+  char *filename_copy = malloc(namelen + 1);
+  strlcpy(filename_copy, filename, namelen + 1);
+
+  char *filename_string;
+  filename_copy = strtok_r(filename_copy, " ", &filename_string);
+
+  struct file* f = filesys_open(filename_copy);
+
+  if (f == NULL)
+  {
+    file_lock_release();
+    return -1;
+  }
+  else 
+  {
+    file_close(f);
+    file_lock_release();
+    return process_execute(filename);
+  }
 
 }
 
@@ -265,7 +354,7 @@ int read(int fd, void*buffer, unsigned size)
     }
     else 
     {
-      return file_read_at(fptr->ptr, buffer, size, 0);
+      return file_read(fptr->ptr, buffer, size);
     }
 
   }
@@ -293,12 +382,41 @@ void close(int fd)
 
 void exit(int status)
 {
+  struct list_elem *e;
   struct thread *curthread = thread_current();
-  curthread->ex = true;
-  curthread->exit_status = status;
-  
+
+  for (e = list_begin (&curthread->parent->children); e != list_end (&thread_current()->parent->children);
+      e = list_next (e))
+  {
+    struct child_thread *chld = list_entry (e, struct child_thread, elem);
+    if(chld->tid == curthread->tid)
+    {
+      chld->used = true;
+      chld->exit_status = status;
+    }
+  }
+
+	curthread->exit_status = status;
+
+	lock_acquire(&curthread->parent->child_lock);
+
+	if(curthread->parent->wait_for_thread == curthread->tid)
+  {
+		cond_signal(&curthread->parent->child_condition,&curthread->parent->child_lock);
+  }
+
+	lock_release(&curthread->parent->child_lock);
+
   printf("%s: exit(%d)\n", curthread->name, status);
-  thread_exit();
+
+	thread_exit();
+  
+  // struct thread *curthread = thread_current();
+  // curthread->exit_status = status;
+  // thread_current()->parent->ex = true;
+  
+  // printf("%s: exit(%d)\n", curthread->name, status);
+  // thread_exit();
 }
 
 

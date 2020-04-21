@@ -28,7 +28,7 @@ static struct list ready_list;
 
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
-static struct list all_list;
+struct list all_list;
 
 /* Idle thread. */
 static struct thread *idle_thread;
@@ -38,6 +38,7 @@ static struct thread *initial_thread;
 
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
+struct lock file_lock;
 
 /* Stack frame for kernel_thread(). */
 struct kernel_thread_frame
@@ -93,6 +94,15 @@ struct thread* get_thread(tid_t tid);
 //     return NULL;
 // }
 
+void file_lock_acquire()
+{
+  lock_acquire(&file_lock);
+}
+
+void file_lock_release()
+{
+  lock_release(&file_lock);
+}
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -111,9 +121,11 @@ thread_init (void)
 {
   ASSERT (intr_get_level () == INTR_OFF);
 
-  lock_init (&tid_lock);
-  list_init (&ready_list);
-  list_init (&all_list);
+  lock_init(&tid_lock);
+  lock_init(&file_lock);
+
+  list_init(&ready_list);
+  list_init(&all_list);
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -206,6 +218,14 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
+
+  struct child_thread* ct = malloc(sizeof(*ct));
+
+  ct->tid = tid;
+  ct->exit_status = t->exit_status;
+  ct->used = false;
+  list_push_back(&running_thread()->children, &ct->elem);
+
 
   old_level = intr_disable();
 
@@ -492,13 +512,21 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
-  t->ex = false;
+
+  list_init(&t->children);
+
   t->parent = running_thread();
 
   list_init(&t->files);
   t->fd_count = 2;
 
-  old_level = intr_disable ();
+  // old_level = intr_disable ();
+
+  lock_init(&t->child_lock);
+  cond_init(&t->child_condition);
+  t->wait_for_thread = 0;
+  t->current_file = NULL;
+
   list_push_back (&all_list, &t->allelem);
 }
 

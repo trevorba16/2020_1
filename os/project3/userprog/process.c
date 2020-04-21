@@ -23,11 +23,13 @@
 
 #include <log.h>
 
-struct semaphore launched; // really belongs to the thread struct
-struct semaphore exiting; // really belongs to the thread struct
+// struct semaphore launched; // really belongs to the thread struct
+// struct semaphore exiting; // really belongs to the thread struct
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+
+struct list all_list;
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -53,17 +55,19 @@ process_execute (const char *command)
   strlcpy(cmd_copy, command, PGSIZE);
 
   char* args;
-  char* command_name = strtok_r(command, " ", &args);
+  char* command_name = malloc(strlen(command) + 1);
+  strlcpy(command_name, command, strlen(command) + 1);
+  command_name = strtok_r(command_name, " ", &args);
 
 
-  sema_init(&launched,0); //t->launched later
-  sema_init(&exiting,0);
+  // sema_init(&launched,0); //t->launched later
+  // sema_init(&exiting,0);
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (command_name, PRI_DEFAULT, start_process, cmd_copy);
   
   if (tid == TID_ERROR)
     palloc_free_page (cmd_copy);
-  sema_down(&launched);
+  // sema_down(&launched);
   return tid;
 }
 
@@ -92,7 +96,7 @@ start_process (void *command)
   palloc_free_page (command);
   if (!success)
     thread_exit ();
-  sema_up(&launched);
+  // sema_up(&launched);
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -113,12 +117,47 @@ start_process (void *command)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED)
+process_wait (tid_t child_tid)
 {
     // Wait for the child to exit and reap the childs exit status
-    sema_down(&exiting);
+    // sema_down(&exiting);
     // here means child has exited; get childs exit status form its thread
 
+    struct list_elem *e;
+
+    struct child_thread *chld;
+
+    struct list_elem *temp_elem;
+
+    for (e = list_begin(&thread_current()->children); e != list_end(&thread_current()->children); e = list_next(e))
+    {
+      struct child_thread *temp_child = list_entry(e, struct child_thread, elem);
+      if (temp_child->tid == child_tid)
+      {
+        chld = temp_child;
+        temp_elem = e;
+      }
+    }
+
+    if (chld == NULL || temp_elem == NULL)
+      return -1;
+
+    thread_current()->wait_for_thread = chld->tid;
+
+    lock_acquire(&thread_current()->child_lock);
+
+    if (!chld->used)
+    {
+      cond_wait(&thread_current()->child_condition, &thread_current()->child_lock);
+    }
+
+    lock_release(&thread_current()->child_lock);
+
+    int exit_status = chld->exit_status;
+
+    list_remove(temp_elem);
+
+    return exit_status;
 }
 
 /* Free the current process's resources. */
@@ -129,8 +168,14 @@ process_exit (void)
   uint32_t *pd;
 
   int exit_code = cur->exit_status;
+  
+  file_lock_acquire();
+
+  file_close(thread_current()->current_file);
 
   close_all_files(&thread_current()->files);
+
+  file_lock_release();
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -148,7 +193,7 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
-  sema_up(&exiting);
+  // sema_up(&exiting);
 }
 
 /* Sets up the CPU for running user code in the current
@@ -265,6 +310,8 @@ load (const char *cmdstr, void (**eip) (void), void **esp)
   strlcpy(cmdstr_copy, cmdstr, strlen(cmdstr) + 1);
   char *file_name = strtok_r(cmdstr, " ", &args);
 
+  file_lock_acquire();
+
   file = filesys_open (file_name);
   if (file == NULL)
     {
@@ -353,9 +400,14 @@ load (const char *cmdstr, void (**eip) (void), void **esp)
 
   success = true;
 
+  file_deny_write(file);
+
+  thread_current()->current_file = file;
+
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  // file_close (file);
+  file_lock_release();
   return success;
 }
 
